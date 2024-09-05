@@ -333,7 +333,7 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
     return texts_relative
     
 
-def generate_subgraphs(question, graph, model, tokenizer):
+def generate_subgraphs(question, graph, model, tokenizer,device):
     entities = extract_entities(question)
     relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)
     subgraphs = extract_subgraph(relative_nodenames,graph)

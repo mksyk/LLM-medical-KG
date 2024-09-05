@@ -52,7 +52,7 @@ class LeaderAgent:
         relevant_agents = self.decide_agents_via_leader(entities)
 
         # 3. 根据 query 和图谱生成子图知识
-        knowledge_subgraphs = generate_subgraphs(query)
+        knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device)
 
         # 4. 收集各科室的回答
         responses = self.collect_responses(relevant_agents, query)
