@@ -129,11 +129,10 @@ def remove_punctuation_and_newlines(text):
     返回:
     - str: 处理后的字符串
     """
-    # 定义正则表达式，匹配所有标点符号（中文和英文）以及换行符
-    pattern = r"[^\w\s]"  # 匹配所有非单词字符和非空白字符
-    cleaned_text = re.sub(pattern, "", text)  # 删除标点符号
-    cleaned_text = cleaned_text.replace("\n", "")  # 删除换行符
-    cleaned_text = cleaned_text.replace("\r", "")  # 删除回车符
+    pattern = r"[^\w\s]"
+    cleaned_text = re.sub(pattern, "", text)  
+    cleaned_text = cleaned_text.replace("\n", "")
+    cleaned_text = cleaned_text.replace("\r", "") 
     
     return cleaned_text
 
@@ -152,23 +151,6 @@ def extract_entities(question):
     question = remove_punctuation_and_newlines(question)
     tokenizer = BertTokenizerFast.from_pretrained('iioSnail/bert-base-chinese-medical-ner')
     model = AutoModelForTokenClassification.from_pretrained("iioSnail/bert-base-chinese-medical-ner")
-    # # 对输入文本进行编码
-    # inputs = tokenizer([question], return_tensors="pt", padding=True, add_special_tokens=False)
-    
-    # # 模型推理
-    # outputs = model(**inputs)
-    
-    # # 提取预测标签
-    # logits = outputs.logits
-    # predicted_labels = logits.argmax(-1).squeeze(0)  # 移除批次维度
-    # attention_mask = inputs['attention_mask'].squeeze(0)  # 移除批次维度
-    
-    # # 将结果转换为 PyTorch 张量
-    # predicted_labels = torch.tensor(predicted_labels)
-    # attention_mask = torch.tensor(attention_mask)
-    
-    # # 计算实体
-    # entities = predicted_labels * attention_mask
 
     inputs = tokenizer([question], return_tensors="pt", padding=True, add_special_tokens=False)
     outputs = model(**inputs)
@@ -192,11 +174,7 @@ def get_entity_embeddings(entities, model, tokenizer, device):
     for entity in entities:
         inputs = tokenizer(entity, return_tensors="pt").to(device)
         outputs = model(**inputs, output_hidden_states=True)
-        
-        # `hidden_states` 是一个元组，最后一层的隐藏状态通常在最后一个元素中
         last_hidden_state = outputs.hidden_states[-1]
-        
-        # 取最后一层的隐藏状态的平均值作为embedding
         embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
         embeddings.append(embedding)
         count += 1
@@ -218,12 +196,9 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
 
     relative_nodenames = {}
 
-
-    # 从 JSON 文件加载 id 和名称的映射
     with open("data/dict_nodes.json", "r", encoding='utf-8') as f:
         id_to_name = json.load(f)
 
-    # 输出查询结果
     for i, idx_list in enumerate(indices):
         print(f"Query: {entities[i]}")
         relative_nodenames[entities[i]] = []
@@ -244,7 +219,6 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
 
     for entity, rel_nodes in relative_nodenames.items():
         for node in rel_nodes:
-            # 查询子图的指定阶数
             query = f"""
             MATCH (n {{name: '{node}'}}) 
             OPTIONAL MATCH path=(n)-[r*1..{depth}]-(m) 
@@ -254,7 +228,7 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
             RETURN DISTINCT nodes[idx].name AS source_node, rels[idx].name AS relationship, nodes[idx+1].name AS target_node
             """
             result = graph.run(query).data()
-            print(f"Subgraph of {node} (from {entity}) finished.")
+            # print(f"Subgraph of {node} (from {entity}) finished.")
             subgraphs[node] = result
 
     return subgraphs
@@ -307,17 +281,10 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
     """
-    # 将subgraphs中的三元组转换为文本
     texts_from_subgraphs = triple_to_text(subgraphs)
-    
-    # 计算question和texts的embedding
     question_embedding = get_entity_embeddings([question], model, tokenizer, device)[0]
     texts_embeddings = get_entity_embeddings(texts_from_subgraphs, model, tokenizer, device)
-
-    # 计算question和texts的余弦相似度
     similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
-
-    # 按相似度排序并选择
     sorted_indices = similarities.argsort()[::-1]  # 从高到低排序
     texts_relative = []
 
