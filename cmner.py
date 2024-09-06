@@ -96,7 +96,7 @@ class MedicalNerModel(pl.LightningModule):
 
                 if flag and pred_idx != 2 and pred_idx != 3:
                     # 出现了不应该出现的index
-                    print("Abnormal prediction results for sentence", sentences[i])
+                    # print("Abnormal prediction results for sentence", sentences[i])
                     start_idx = -1
                     end_idx = -1
                     continue
@@ -200,7 +200,7 @@ def get_entity_embeddings(entities, model, tokenizer, device):
         embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
         embeddings.append(embedding)
         count += 1
-        print(f"{count} : embedding of {entity} finish.")
+        # print(f"{count} : embedding of {entity} finish.")
     
     return np.vstack(embeddings)
 
@@ -333,11 +333,15 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
     return texts_relative
     
 
-def generate_subgraphs(question, graph, model, tokenizer,device):
+def generate_subgraphs(question, graph, model, tokenizer,device,leader = False):
     entities = extract_entities(question)
     relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)
-    subgraphs = extract_subgraph(relative_nodenames,graph)
-    subgraphs = pruning(subgraphs, question, model, tokenizer, device, similarity_threshold=0.8)
+    if leader:
+        subgraphs = extract_subgraph(relative_nodenames,graph)
+        subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
+    else:
+        subgraphs = extract_subgraph(relative_nodenames,graph,3)
+        subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
     print(subgraphs)
 
     return subgraphs
