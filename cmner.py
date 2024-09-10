@@ -2,121 +2,185 @@ import argparse
 import numpy as np
 import pytorch_lightning as pl
 import torch.optim
-from transformers import BertTokenizerFast, get_linear_schedule_with_warmup, \
+from transformers import AutoTokenizer,BertTokenizerFast, get_linear_schedule_with_warmup, \
     AutoModelForTokenClassification
 from sklearn.metrics.pairwise import cosine_similarity
 import json
 import faiss
 import re
 
-class MedicalNerModel(pl.LightningModule):
+class NER:
+    """
+    实体命名实体识别
+    """
+    def __init__(self,model_path) -> None:
+        """
+        Args:
+            model_path:模型地址
+        """
 
-    def __init__(self, args: argparse.Namespace):
-        super(MedicalNerModel, self).__init__()
-        self.args = args
-        self.tokenizer = BertTokenizerFast.from_pretrained('bert-base-chinese')
-        self.model = AutoModelForTokenClassification.from_pretrained("bert-base-chinese", num_labels=5)
+        self.model_path = model_path
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModelForTokenClassification.from_pretrained(model_path)
 
-        self.val_correct_num = 0
-        self.val_total_num = 0
-
-    def training_step(self, batch, batch_idx, *args, **kwargs):
-        inputs, targets, = batch
-        outputs = self.model(**inputs, labels=targets)
-        loss = outputs.loss
-        outputs = outputs.logits
-
-        self.log("train_loss", loss.item(), prog_bar=True)
-
-        return {
-            'loss': loss,
-            'outputs': outputs.argmax(-1) * inputs['attention_mask'],
-            'targets': targets,
-        }
-
-    def on_train_batch_end(self, outputs, batch, batch_idx: int):
-        targets_size = batch[1].size()
-        preds = outputs['outputs']
-        targets = outputs['targets']
-
-        correct_num = torch.all(preds == targets, dim=1).sum().item()
-        total_num = targets_size[0]
-
-        self.log("train_acc", correct_num / total_num, prog_bar=True)
-
-    def validation_step(self, batch, batch_idx, *args, **kwargs):
-        inputs, targets = batch
-        outputs = self.model(**inputs).logits
-
-        preds = outputs.argmax(-1) * inputs['attention_mask']
-
-        correct_num = torch.all(preds == targets, dim=1).sum().item()
-        total_num = targets.size(0)
-
-        self.log("val_acc", correct_num / total_num)
-
-        self.val_correct_num += correct_num
-        self.val_total_num += total_num
-
-        return {
-            'outputs': preds,
-            'targets': targets,
-        }
-
-    def on_validation_epoch_end(self) -> None:
-        print("Epoch",self.current_epoch, ". val_acc:", self.val_correct_num / self.val_total_num)
-        self.val_correct_num = 0
-        self.val_total_num = 0
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.args.lr)
-
-        t_total = len(self.args.train_loader) * self.args.epochs
-
-        warmup_steps = int(0.1 * t_total)
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer, num_warmup_steps=warmup_steps, num_training_steps=t_total
+    def ner(self,sentence:str) -> list:
+        """
+        命名实体识别
+        Args:
+            sentence:要识别的句子
+        Return:
+            实体列表:[{'type':'LOC','tokens':[...]},...]
+        """
+        ans = []
+        for i in range(0,len(sentence),500):
+            ans = ans + self._ner(sentence[i:i+500])
+        return ans
+    
+    def _ner(self,sentence:str) -> list:
+        if len(sentence) == 0: return []
+        inputs = self.tokenizer(
+            sentence, add_special_tokens=True, return_tensors="pt"
         )
+        
+        if torch.cuda.is_available():
+            self.model = self.model.to(torch.device('cuda:0'))
+            for key in inputs:
+                inputs[key] = inputs[key].to(torch.device('cuda:0'))
+            
+        with torch.no_grad():
+            logits = self.model(**inputs).logits
+        predicted_token_class_ids = logits.argmax(-1)
+        predicted_tokens_classes = [self.model.config.id2label[t.item()] for t in predicted_token_class_ids[0]]
+        entities = []
+        entity = {}
+        for idx, token in enumerate(self.tokenizer.tokenize(sentence,add_special_tokens=True)):
+            if 'B-' in predicted_tokens_classes[idx] or 'S-' in predicted_tokens_classes[idx]:
+                if len(entity) != 0:
+                    entities.append(entity)
+                entity = {}
+                entity['type'] = predicted_tokens_classes[idx].replace('B-','').replace('S-','')
+                entity['tokens'] = [token]
+            elif 'I-' in predicted_tokens_classes[idx] or 'E-' in predicted_tokens_classes[idx] or 'M-' in predicted_tokens_classes[idx]:
+                if len(entity) == 0:
+                    entity['type'] = predicted_tokens_classes[idx].replace('I-','').replace('E-','').replace('M-','')
+                    entity['tokens'] = []
+                entity['tokens'].append(token)
+            else:
+                if len(entity) != 0:
+                    entities.append(entity)
+                    entity = {}
+        if len(entity) > 0:
+            entities.append(entity)
+        return entities
 
-        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+# class MedicalNerModel(pl.LightningModule):
+
+#     def __init__(self, args: argparse.Namespace):
+#         super(MedicalNerModel, self).__init__()
+#         self.args = args
+#         self.tokenizer = BertTokenizerFast.from_pretrained('bert-base-chinese')
+#         self.model = AutoModelForTokenClassification.from_pretrained("bert-base-chinese", num_labels=5)
+
+#         self.val_correct_num = 0
+#         self.val_total_num = 0
+
+#     def training_step(self, batch, batch_idx, *args, **kwargs):
+#         inputs, targets, = batch
+#         outputs = self.model(**inputs, labels=targets)
+#         loss = outputs.loss
+#         outputs = outputs.logits
+
+#         self.log("train_loss", loss.item(), prog_bar=True)
+
+#         return {
+#             'loss': loss,
+#             'outputs': outputs.argmax(-1) * inputs['attention_mask'],
+#             'targets': targets,
+#         }
+
+#     def on_train_batch_end(self, outputs, batch, batch_idx: int):
+#         targets_size = batch[1].size()
+#         preds = outputs['outputs']
+#         targets = outputs['targets']
+
+#         correct_num = torch.all(preds == targets, dim=1).sum().item()
+#         total_num = targets_size[0]
+
+#         self.log("train_acc", correct_num / total_num, prog_bar=True)
+
+#     def validation_step(self, batch, batch_idx, *args, **kwargs):
+#         inputs, targets = batch
+#         outputs = self.model(**inputs).logits
+
+#         preds = outputs.argmax(-1) * inputs['attention_mask']
+
+#         correct_num = torch.all(preds == targets, dim=1).sum().item()
+#         total_num = targets.size(0)
+
+#         self.log("val_acc", correct_num / total_num)
+
+#         self.val_correct_num += correct_num
+#         self.val_total_num += total_num
+
+#         return {
+#             'outputs': preds,
+#             'targets': targets,
+#         }
+
+#     def on_validation_epoch_end(self) -> None:
+#         print("Epoch",self.current_epoch, ". val_acc:", self.val_correct_num / self.val_total_num)
+#         self.val_correct_num = 0
+#         self.val_total_num = 0
+
+#     def configure_optimizers(self):
+#         optimizer = torch.optim.AdamW(self.parameters(), lr=self.args.lr)
+
+#         t_total = len(self.args.train_loader) * self.args.epochs
+
+#         warmup_steps = int(0.1 * t_total)
+#         scheduler = get_linear_schedule_with_warmup(
+#             optimizer, num_warmup_steps=warmup_steps, num_training_steps=t_total
+#         )
+
+#         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
    
-    @staticmethod
-    def format_outputs(sentences, outputs):
-        preds = []
-        for i, pred_indices in enumerate(outputs):
-            words = []
-            start_idx = -1
-            end_idx = -1
-            flag = False
-            for idx, pred_idx in enumerate(pred_indices):
-                if pred_idx == 1:
-                    start_idx = idx
-                    flag = True
-                    continue
+#     @staticmethod
+#     def format_outputs(sentences, outputs):
+#         preds = []
+#         for i, pred_indices in enumerate(outputs):
+#             words = []
+#             start_idx = -1
+#             end_idx = -1
+#             flag = False
+#             for idx, pred_idx in enumerate(pred_indices):
+#                 if pred_idx == 1:
+#                     start_idx = idx
+#                     flag = True
+#                     continue
 
-                if flag and pred_idx != 2 and pred_idx != 3:
-                    # 出现了不应该出现的index
-                    # print("Abnormal prediction results for sentence", sentences[i])
-                    start_idx = -1
-                    end_idx = -1
-                    continue
+#                 if flag and pred_idx != 2 and pred_idx != 3:
+#                     # 出现了不应该出现的index
+#                     # print("Abnormal prediction results for sentence", sentences[i])
+#                     start_idx = -1
+#                     end_idx = -1
+#                     continue
 
-                if pred_idx == 3:
-                    end_idx = idx
+#                 if pred_idx == 3:
+#                     end_idx = idx
 
-                    words.append({
-                        "start": start_idx,
-                        "end": end_idx + 1,
-                        "word": sentences[i][start_idx:end_idx+1]
-                    })
-                    start_idx = -1
-                    end_idx = -1
-                    flag = False
-                    continue
+#                     words.append({
+#                         "start": start_idx,
+#                         "end": end_idx + 1,
+#                         "word": sentences[i][start_idx:end_idx+1]
+#                     })
+#                     start_idx = -1
+#                     end_idx = -1
+#                     flag = False
+#                     continue
 
-            preds.append(words)
+#             preds.append(words)
 
-        return preds
+#         return preds
 
 
 def remove_punctuation_and_newlines(text):
@@ -149,20 +213,11 @@ def extract_entities(question):
 
     """
     question = remove_punctuation_and_newlines(question)
-    tokenizer = BertTokenizerFast.from_pretrained('iioSnail/bert-base-chinese-medical-ner')
-    model = AutoModelForTokenClassification.from_pretrained("iioSnail/bert-base-chinese-medical-ner")
-
-    inputs = tokenizer([question], return_tensors="pt", padding=True, add_special_tokens=False)
-    outputs = model(**inputs)
-    outputs = outputs.logits.argmax(-1) * inputs['attention_mask']
+    ner_model = NER('lixin12345/chinese-medical-ner')
+    entities = ner_model.ner(question)  # 调用extract_entities函数
+    entities = list(set([''.join(d.get('tokens', [])) for d in entities]))
     
-    # 格式化输出
-    formatted_output = MedicalNerModel.format_outputs([question], outputs)
-    
-    # 提取所有实体词
-    words = [entity['word'] for entity_list in formatted_output for entity in entity_list]
-    
-    return words
+    return entities
 
     
 def get_entity_embeddings(entities, model, tokenizer, device):
@@ -189,7 +244,6 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     对于提取的实体，使其与图中的节点对齐，返回图中的相关节点
     """
     embeddings = get_entity_embeddings(entities, model, tokenizer, device)
-    print(embeddings.shape)
     index_with_ids = faiss.read_index('data/node_embeddings_ids.index')
 
     distances, indices = index_with_ids.search(embeddings, k)
@@ -205,9 +259,9 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
         for j, idx in enumerate(idx_list):
             nearest_name = id_to_name[str(idx)]  # 注意 id 是字符串类型
             relative_nodenames[entities[i]].append(nearest_name)
-            print(f"Nearest Neighbor {j+1}: {nearest_name} (ID: {idx})")
-            print(f"Distance: {distances[i][j]}")
-        print()
+        #     print(f"Nearest Neighbor {j+1}: {nearest_name} (ID: {idx})")
+        #     print(f"Distance: {distances[i][j]}")
+        # print()
 
     return relative_nodenames
 
@@ -302,11 +356,12 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
 
 def generate_subgraphs(question, graph, model, tokenizer,device,leader = False):
     entities = extract_entities(question)
-    relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)
+    relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)#可能情况，有irrelevant节点，需剪枝
     if leader:
         subgraphs = extract_subgraph(relative_nodenames,graph)
         subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
     else:
+        #没有用到
         subgraphs = extract_subgraph(relative_nodenames,graph,3)
         subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
     print(subgraphs)
