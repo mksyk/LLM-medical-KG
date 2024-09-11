@@ -180,7 +180,7 @@ def get_entity_embeddings(entities, device):
         embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
         embeddings.append(embedding)
         count += 1
-        print(f"{count} : embedding of {entity} finish.")
+        # print(f"{count} : embedding of {entity} finish.")
     
     return np.vstack(embeddings)
 
