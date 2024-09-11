@@ -3,7 +3,7 @@ import numpy as np
 import pytorch_lightning as pl
 import torch.optim
 from transformers import BertTokenizerFast, get_linear_schedule_with_warmup, \
-    AutoModelForTokenClassification
+    AutoModelForTokenClassification,AutoTokenizer, AutoModelForMaskedLM
 from sklearn.metrics.pairwise import cosine_similarity
 import json
 import faiss
@@ -165,10 +165,12 @@ def extract_entities(question):
     return words
 
     
-def get_entity_embeddings(entities, model, tokenizer, device):
+def get_entity_embeddings(entities, device):
     """
     使用LLM计算取得的实体的embedding
     """
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
+    model = AutoModelForMaskedLM.from_pretrained("bert-base-chinese").to(device)
     embeddings = []
     count = 0 
     for entity in entities:
@@ -178,7 +180,7 @@ def get_entity_embeddings(entities, model, tokenizer, device):
         embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
         embeddings.append(embedding)
         count += 1
-        # print(f"{count} : embedding of {entity} finish.")
+        print(f"{count} : embedding of {entity} finish.")
     
     return np.vstack(embeddings)
 
@@ -188,9 +190,9 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     """
     对于提取的实体，使其与图中的节点对齐，返回图中的相关节点
     """
-    embeddings = get_entity_embeddings(entities, model, tokenizer, device)
+    embeddings = get_entity_embeddings(entities, device)
     print(embeddings.shape)
-    index_with_ids = faiss.read_index('data/node_embeddings_ids.index')
+    index_with_ids = faiss.read_index('data/node_embeddings_bert.index')
 
     distances, indices = index_with_ids.search(embeddings, k)
 
@@ -282,8 +284,8 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
     """
     texts_from_subgraphs = triple_to_text(subgraphs)
-    question_embedding = get_entity_embeddings([question], model, tokenizer, device)[0]
-    texts_embeddings = get_entity_embeddings(texts_from_subgraphs, model, tokenizer, device)
+    question_embedding = get_entity_embeddings([question], device)[0]
+    texts_embeddings = get_entity_embeddings(texts_from_subgraphs,device)
     similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
     sorted_indices = similarities.argsort()[::-1]  # 从高到低排序
     texts_relative = []

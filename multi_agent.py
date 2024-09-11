@@ -2,6 +2,9 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from cmner import *
 from py2neo import Graph
+import time
+
+
 
 def save_to_md(file_name, content):
     with open(file_name, 'a', encoding='utf-8') as f:
@@ -14,9 +17,16 @@ profile = "bolt://neo4j:Crj123456@localhost:7687"
 graph = Graph(profile)
 
 
-model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
-tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
+set_llm = 'Qwen'
+if set_llm == 'llama':
+    model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
+elif set_llm =='Qwen':
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
+    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-7B-Instruct")
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
@@ -135,6 +145,9 @@ query = """患者既往慢阻肺多年;
 否认"高血压、糖尿病"等慢性病病史，否认"肝炎、结核"等传染病病史及其密切接触史，
 否认其他手术、重大外伤、输血史，否认"食物、药物、其他"等过敏史，预防接种史随社会。
 """
+start_time = time.time()
 final_answer = leader_agent.consult(query)
 print(f"最终问诊结果: {final_answer}")
 save_to_md(file_name,f"---------------\n"+f"最终问诊结果:\n {final_answer}")
+end_time = time.time()
+print(f"运行时长:{end_time - start_time}") 
