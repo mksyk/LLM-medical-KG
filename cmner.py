@@ -292,19 +292,16 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
     return subgraphs
 
 
-
-def triple_to_text(subgraphs):
-
-    """
-    Args:
-        subgraphs (list[list]):每一行代表一个起始结点
-    Returns:
-        list[list]: list[起始结点] = 起始结点对应子图的自然语言形式 
-    """
-    final_texts = []
-
+def triples_to_text(subgraphs):
+    # """
+    # Args:
+    #     subgraphs (dict[list]):每一行代表一个起始结点
+    # Returns:
+    #     dict[str, list[str]]: key为起始结点，value为对应的子图的自然语言形式的列表 
+    # """
+    #final_texts = {}
+    generated_texts = []
     for source_node, triples in subgraphs.items():
-        generated_texts = []
         for triple in triples:
             source = triple['source_node']
             relationship = triple['relationship']
@@ -334,11 +331,58 @@ def triple_to_text(subgraphs):
                 generated_texts.append(f"{source}属于{target}科室。")
             else:
                 generated_texts.append(f"{source}与{target}的关系是{relationship}。")
-        final_texts.append(generated_texts)
-    # # 打印生成的文本列表
-    # for text in generated_texts:
-    #     print(text)
-    return final_texts
+        # final_texts[source_node] = generated_texts
+    return generated_texts
+
+
+# def triple_to_text(subgraph):
+
+# def triple_to_text(subgraphs):
+
+#     """
+#     Args:
+#         subgraphs (list[list]):每一行代表一个起始结点
+#     Returns:
+#         list[list]: list[起始结点] = 起始结点对应子图的自然语言形式 
+#     """
+#     final_texts = []
+
+#     for source_node, triples in subgraphs.items():
+#         generated_texts = []
+#         for triple in triples:
+#             source = triple['source_node']
+#             relationship = triple['relationship']
+#             target = triple['target_node']
+
+#             if relationship == "症状":
+#                 generated_texts.append(f"{source}有可能是{target}的症状。")
+#             elif relationship == "并发症":
+#                 generated_texts.append(f"{source}可能是{target}的并发症。")
+#             elif relationship == "推荐食谱":
+#                 generated_texts.append(f"{source}的推荐食谱包括{target}。")
+#             elif relationship == "忌吃":
+#                 generated_texts.append(f"{source}时忌吃{target}。")
+#             elif relationship == "宜吃":
+#                 generated_texts.append(f"{source}时宜吃{target}。")
+#             elif relationship == "属于":
+#                 generated_texts.append(f"{source}属于{target}。")
+#             elif relationship == "常用药品":
+#                 generated_texts.append(f"{source}的常用药品是{target}。")
+#             elif relationship == "生产药品":
+#                 generated_texts.append(f"{source}生产的药品包括{target}。")
+#             elif relationship == "好评药品":
+#                 generated_texts.append(f"{source}的好评药品包括{target}。")
+#             elif relationship == "诊断检查":
+#                 generated_texts.append(f"{source}可以通过{target}来诊断检查。")
+#             elif relationship == "所属科室":
+#                 generated_texts.append(f"{source}属于{target}科室。")
+#             else:
+#                 generated_texts.append(f"{source}与{target}的关系是{relationship}。")
+#         final_texts.append(generated_texts)
+#     # # 打印生成的文本列表
+#     # for text in generated_texts:
+#     #     print(text)
+#     return final_texts
 
 def triple_to_text_triple(subgraphs):
     """ 
@@ -360,34 +404,50 @@ def triple_to_text_triple(subgraphs):
 def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarity_threshold=None):
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
-    """
-    texts_from_subgraphs = triple_to_text(subgraphs)
-    question_embedding = get_question_embbeding(question, model, tokenizer, device)
-    texts_embeddings = get_entity_embeddings(texts_from_subgraphs, model, tokenizer, device)
-    similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
-    sorted_indices = similarities.argsort()[::-1]  # 从高到低排序
-    texts_relative = []
-    subgraph_relative = []
-    if top_n is not None:
-        # 保留相似度最高的top_n个文本
-        #texts_relative = [texts_from_subgraphs[i] for i in sorted_indices[:top_n]]
-        subgraph_relative = [subgraphs[i] for i in sorted_indices[:top_n]]
-    elif similarity_threshold is not None:
-        # 保留相似度超过阈值的文本
-        #texts_relative = [texts_from_subgraphs[i] for i in sorted_indices if similarities[i] >= similarity_threshold]
-        subgraph_relative = [subgraphs[i] for i in sorted_indices if similarities[i] >= similarity_threshold]
-    else:
-        raise ValueError("You must specify either top_n or similarity_threshold.")
-    return subgraph_relative
 
-    #return texts_relative
+    return : dict[str_source_node,subgraphs_to_text]
+    """
+    question_embedding = get_question_embbeding(question, model, tokenizer, device)
+    all_texts = []
+    all_texts_keys = []
+    all_subgraphs = []
+    for key, subgraphs_from_key in subgraphs.items():
+        all_subgraphs.extend(subgraphs_from_key)
+        all_texts_keys.extend([key] * len(subgraphs_from_key))
+        all_texts.extend(get_entity_embeddings(triples_to_text(subgraphs_from_key)))
+    texts_embeddings = get_entity_embeddings(all_texts, model, tokenizer, device)
+    
+    similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
+
+    # 根据相似度过滤文本
+    if similarity_threshold is not None:
+        selected_indices = [i for i, similarity in enumerate(similarities) if similarity >= similarity_threshold]
+    else:
+        selected_indices = []
+
+    if top_n is not None:
+        top_indices = similarities.argsort()[::-1][:top_n]
+        selected_indices = list(set(selected_indices).union(set(top_indices)))
+
+    if similarities is None and top_n is None:
+        raise ValueError("You must specify either top_n or similarity_threshold.")
+    
+    # 根据选择的索引生成最终结果
+    subgraphs_relative = {}
+    for i in selected_indices:
+        key = all_texts_keys[i]
+        # text = all_texts[i]
+        if key not in subgraphs_relative:
+            subgraphs_relative[key] = []
+        subgraphs_relative[key].append(all_subgraphs[i])
+    return subgraphs_relative
     
     
 def pruning_more_than_one_hop_g(subgraphs, question, model, tokenizer,entities,device, top_n=None, similarity_threshold=None):
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
     """
-    texts_from_subgraphs = triple_to_text(subgraphs)
+    texts_from_subgraphs = triples_to_text(subgraphs)
     question_embedding = get_question_embbeding(question, model, tokenizer, device)
     entities_embbeding = get_entity_embeddings(entities, model, tokenizer, device)
     texts_embeddings = get_entity_embeddings(texts_from_subgraphs, model, tokenizer, device)
@@ -421,6 +481,7 @@ def generate_subgraphs(question, graph, model, tokenizer,device,leader = False):
         #没有用到 这里是准备传给科室agent时，提取科室节点的三阶子图
         subgraphs = extract_subgraph(relative_nodenames,graph,3)
         subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
+    print("--------------------------subgraph")
     print(subgraphs)
-
+    print("--------------------------------")
     return subgraphs
