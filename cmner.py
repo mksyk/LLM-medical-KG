@@ -234,9 +234,14 @@ def get_entity_embeddings(entities, model, tokenizer, device):
         embeddings.append(embedding)
         count += 1
         # print(f"{count} : embedding of {entity} finish.")
-    
     return np.vstack(embeddings)
 
+def get_question_embbeding(query, model, tokenizer, device):
+    embeddings = []
+    inputs = tokenizer(query, return_tensors="pt").to(device)
+    outputs = model(**inputs, output_hidden_states=True)
+    last_hidden_state = outputs.hidden_states[-1]
+    return last_hidden_state.mean(dim=1).cpu().detach().numpy()
 
 
 def get_relative_nodenames(entities, model, tokenizer, device,k=2):
@@ -284,17 +289,22 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
             result = graph.run(query).data()
             # print(f"Subgraph of {node} (from {entity}) finished.")
             subgraphs[node] = result
-
     return subgraphs
 
 
-def triple_to_text(subgraphs):
-    """ 
-    将取得的子图三元组转化为文本
-    """
-    generated_texts = []
 
-    for key, triples in subgraphs.items():
+def triple_to_text(subgraphs):
+
+    """
+    Args:
+        subgraphs (list[list]):每一行代表一个起始结点
+    Returns:
+        list[list]: list[起始结点] = 起始结点对应子图的自然语言形式 
+    """
+    final_texts = []
+
+    for source_node, triples in subgraphs.items():
+        generated_texts = []
         for triple in triples:
             source = triple['source_node']
             relationship = triple['relationship']
@@ -324,20 +334,67 @@ def triple_to_text(subgraphs):
                 generated_texts.append(f"{source}属于{target}科室。")
             else:
                 generated_texts.append(f"{source}与{target}的关系是{relationship}。")
-
+        final_texts.append(generated_texts)
     # # 打印生成的文本列表
     # for text in generated_texts:
     #     print(text)
+    return final_texts
 
-    return generated_texts
+def triple_to_text_triple(subgraphs):
+    """ 
+    将取得的子图三元组转化为文本形式，如
+    """
+    graph_changed_to_texts = []
+
+    for key, triples in subgraphs.items():
+        for triple in triples:
+            source = triple['source_node']
+            relationship = triple['relationship']
+            target = triple['target_node']
+            graph_changed_to_texts.append(f"{{{source}}},{{{relationship}}},{{{target}}}")
+        
+
+    return graph_changed_to_texts
+
 
 def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarity_threshold=None):
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
     """
     texts_from_subgraphs = triple_to_text(subgraphs)
-    question_embedding = get_entity_embeddings([question], model, tokenizer, device)[0]
+    question_embedding = get_question_embbeding(question, model, tokenizer, device)
     texts_embeddings = get_entity_embeddings(texts_from_subgraphs, model, tokenizer, device)
+    similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
+    sorted_indices = similarities.argsort()[::-1]  # 从高到低排序
+    texts_relative = []
+    subgraph_relative = []
+    if top_n is not None:
+        # 保留相似度最高的top_n个文本
+        #texts_relative = [texts_from_subgraphs[i] for i in sorted_indices[:top_n]]
+        subgraph_relative = [subgraphs[i] for i in sorted_indices[:top_n]]
+    elif similarity_threshold is not None:
+        # 保留相似度超过阈值的文本
+        #texts_relative = [texts_from_subgraphs[i] for i in sorted_indices if similarities[i] >= similarity_threshold]
+        subgraph_relative = [subgraphs[i] for i in sorted_indices if similarities[i] >= similarity_threshold]
+    else:
+        raise ValueError("You must specify either top_n or similarity_threshold.")
+    return subgraph_relative
+
+    #return texts_relative
+    
+    
+def pruning_more_than_one_hop_g(subgraphs, question, model, tokenizer,entities,device, top_n=None, similarity_threshold=None):
+    """
+    剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
+    """
+    texts_from_subgraphs = triple_to_text(subgraphs)
+    question_embedding = get_question_embbeding(question, model, tokenizer, device)
+    entities_embbeding = get_entity_embeddings(entities, model, tokenizer, device)
+    texts_embeddings = get_entity_embeddings(texts_from_subgraphs, model, tokenizer, device)
+    #for subgraph in subgraphs:
+        #对于每个子图
+        #对于每个实体生成的多个子图，从最深度遍历，深度循环为 2-max_depth，假设max深度为4
+        #对于当前子图的末尾entity与输入的所有entities比较相似度，当高于某一阈值时，则保留，否则删除
     similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
     sorted_indices = similarities.argsort()[::-1]  # 从高到低排序
     texts_relative = []
@@ -359,9 +416,9 @@ def generate_subgraphs(question, graph, model, tokenizer,device,leader = False):
     relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)#可能情况，有irrelevant节点，需剪枝
     if leader:
         subgraphs = extract_subgraph(relative_nodenames,graph)
-        subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
+        subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)#得到relative graph
     else:
-        #没有用到
+        #没有用到 这里是准备传给科室agent时，提取科室节点的三阶子图
         subgraphs = extract_subgraph(relative_nodenames,graph,3)
         subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
     print(subgraphs)

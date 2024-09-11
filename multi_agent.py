@@ -13,13 +13,12 @@ file_name = "test_outputs.md"
 profile = "bolt://neo4j:Crj123456@localhost:7687"
 graph = Graph(profile)
 
-set_llm = 'Qwen'
+set_llm = 'llama'
 if set_llm == 'llama':
     model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
 elif set_llm =='Qwen':
-    # Qwen 连不上huggingface
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
     model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-7B-Instruct")
 
@@ -54,7 +53,22 @@ class MedicalAgent:
         save_to_md(file_name,f"-------{self.department_name}专家发言--------\n"+response)
 
         return response
+    
+    def infer_mindmap(self,subgraphs):
+        #example 编写
+        example = """"""
+        triple_in_text_form = triple_to_text_triple(subgraphs)
+        prompt = f""""""
+        inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
+        output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
+        mind_map = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
+        return mind_map
 
+    def evaluate_truth_of_mind_map(self,mind_map,query):
+        #判断mind_map的实体是否都来自于知识图谱
+        #判断mind_map转成自然语言后，其与query的匹配程度，即truth
+        pass
+        
 
 
 class LeaderAgent:
