@@ -295,42 +295,41 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
 def triples_to_text(subgraphs):
     # """
     # Args:
-    #     subgraphs (dict[list]):每一行代表一个起始结点
+    #     subgraphs (dict[str,list]):每一行代表一个起始结点
     # Returns:
     #     dict[str, list[str]]: key为起始结点，value为对应的子图的自然语言形式的列表 
     # """
     #final_texts = {}
     generated_texts = []
-    for source_node, triples in subgraphs.items():
-        for triple in triples:
-            source = triple['source_node']
-            relationship = triple['relationship']
-            target = triple['target_node']
-
-            if relationship == "症状":
-                generated_texts.append(f"{source}有可能是{target}的症状。")
-            elif relationship == "并发症":
-                generated_texts.append(f"{source}可能是{target}的并发症。")
-            elif relationship == "推荐食谱":
-                generated_texts.append(f"{source}的推荐食谱包括{target}。")
-            elif relationship == "忌吃":
-                generated_texts.append(f"{source}时忌吃{target}。")
-            elif relationship == "宜吃":
-                generated_texts.append(f"{source}时宜吃{target}。")
-            elif relationship == "属于":
-                generated_texts.append(f"{source}属于{target}。")
-            elif relationship == "常用药品":
-                generated_texts.append(f"{source}的常用药品是{target}。")
-            elif relationship == "生产药品":
-                generated_texts.append(f"{source}生产的药品包括{target}。")
-            elif relationship == "好评药品":
-                generated_texts.append(f"{source}的好评药品包括{target}。")
-            elif relationship == "诊断检查":
-                generated_texts.append(f"{source}可以通过{target}来诊断检查。")
-            elif relationship == "所属科室":
-                generated_texts.append(f"{source}属于{target}科室。")
-            else:
-                generated_texts.append(f"{source}与{target}的关系是{relationship}。")
+    for triple in subgraphs:
+        #for source_node,triple in one_source_node_triples.items():
+        source = triple['source_node']
+        relationship = triple['relationship']
+        target = triple['target_node']
+        if relationship == "症状":
+            generated_texts.append(f"{source}有可能是{target}的症状。")
+        elif relationship == "并发症":
+            generated_texts.append(f"{source}可能是{target}的并发症。")
+        elif relationship == "推荐食谱":
+            generated_texts.append(f"{source}的推荐食谱包括{target}。")
+        elif relationship == "忌吃":
+            generated_texts.append(f"{source}时忌吃{target}。")
+        elif relationship == "宜吃":
+            generated_texts.append(f"{source}时宜吃{target}。")
+        elif relationship == "属于":
+            generated_texts.append(f"{source}属于{target}。")
+        elif relationship == "常用药品":
+            generated_texts.append(f"{source}的常用药品是{target}。")
+        elif relationship == "生产药品":
+            generated_texts.append(f"{source}生产的药品包括{target}。")
+        elif relationship == "好评药品":
+            generated_texts.append(f"{source}的好评药品包括{target}。")
+        elif relationship == "诊断检查":
+            generated_texts.append(f"{source}可以通过{target}来诊断检查。")
+        elif relationship == "所属科室":
+            generated_texts.append(f"{source}属于{target}科室。")
+        else:
+            generated_texts.append(f"{source}与{target}的关系是{relationship}。")    
         # final_texts[source_node] = generated_texts
     return generated_texts
 
@@ -407,16 +406,17 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
 
     return : dict[str_source_node,subgraphs_to_text]
     """
-    question_embedding = get_question_embbeding(question, model, tokenizer, device)
+    #question_embedding = get_question_embbeding(question, model, tokenizer, device)
+
     all_texts = []
     all_texts_keys = []
     all_subgraphs = []
     for key, subgraphs_from_key in subgraphs.items():
         all_subgraphs.extend(subgraphs_from_key)
         all_texts_keys.extend([key] * len(subgraphs_from_key))
-        all_texts.extend(get_entity_embeddings(triples_to_text(subgraphs_from_key)))
+        all_texts.extend(triples_to_text(subgraphs_from_key))#也可以直接转为向量加入
     texts_embeddings = get_entity_embeddings(all_texts, model, tokenizer, device)
-    
+    question_embedding = get_entity_embeddings([question],model,tokenizer,device)[0]
     similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
 
     # 根据相似度过滤文本
@@ -481,7 +481,7 @@ def generate_subgraphs(question, graph, model, tokenizer,device,leader = False):
         #没有用到 这里是准备传给科室agent时，提取科室节点的三阶子图
         subgraphs = extract_subgraph(relative_nodenames,graph,3)
         subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
-    print("--------------------------subgraph")
-    print(subgraphs)
-    print("--------------------------------")
+    #print("--------------------------subgraph")
+    #print(subgraphs)
+    #print("--------------------------------")
     return subgraphs

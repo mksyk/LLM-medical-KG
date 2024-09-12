@@ -54,6 +54,28 @@ class MedicalAgent:
 
         return response
     
+    def generate_response2(self,query,kg):
+        # 构造适合该科室的prompt，并生成科室的回答
+        prompt = f"""你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：{query}\n你的发言："""
+        #inputs的修改思路：基于论文Knowledge Prompting in Pre-trained Language Model for Natural Language Understanding修改
+        #改为基于思维导图的形式
+        #思维导图的验证方式，算法参考Boosting Language Models Reasoning with Chain-of-Knowledge Prompting的F2
+        #将query和对应思维导图堆叠
+        inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
+        output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
+        response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
+        save_to_md(file_name,f"-------{self.department_name}专家发言--------\n"+response)
+        return response
+    
+    def seek_wide_knowledge(self,subgraphs):
+        extened_subgraphs = {}
+        for source_node,kgs in subgraphs:
+            #Cypher语句
+            pass
+        
+        return extened_subgraphs
+    
+
     def infer_mindmap(self,subgraphs):
         #example 编写
         example = """"""
@@ -85,17 +107,17 @@ class LeaderAgent:
         print("__________提取实体___________")
         print(entities)
         print("____________________________")
-        relevant_agents = self.decide_agents_via_leader(entities,query)
-        knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device,True)#重复提取实体，可以优化
+        knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device,True)
+        relevant_agents,subgraphs_in_each_agent = self.decide_agents_via_leader(entities,query,knowledge_subgraphs)#TODO
         #疑问：leader 期望根据获取的实体，将对应的子图交给对应的科室。特殊情况：其中某些子图不分配到某些科室，原因：科室不够充分、产生的子图为冗余子图，需要pruning(这个在上一行实现了)
-        responses = self.collect_responses(relevant_agents, query)
+        responses = self.collect_responses(relevant_agents, query,subgraphs_in_each_agent)
         combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)#需要通过加权投票机制，保留并融合相关科室智能体给出的答案，各科室对于不明确的信息，给出显式的反应
         final_response = self.summarize_with_leader_agent(combined_responses)#格式化输出
         return final_response
 
     #query实际是query_entities
     #examples是否需要修改
-    def decide_agents_via_leader(self,entities,query):
+    def decide_agents_via_leader(self,entities,query,knowledge_subgraphs):
         # Few-shot 示例
         few_shot_examples = """
         这是几个输入输出的示例，你的输出应该仿照示例中的输出。
@@ -127,16 +149,19 @@ class LeaderAgent:
             if dept in response:
                 extracted_departments.append(dept)
         save_to_md(file_name,f"------departments------\n"+ ','.join(extracted_departments) + "\n-----------------------")
-        return [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
+        relevant_agent = [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
+        return relevant_agent,None
 
-    def collect_responses(self, agents, query):
+    def collect_responses(self, agents, query,subgraphs_in_each_agent):
         responses = {}
+        #TODO 增加subgraphs_in_each_agent分配给对应的agent，获取更多的信息，然后形成思维导图，
         for agent in agents:
             response = agent.generate_response(query)
             responses[agent.department_name] = response
         return responses
 
     def combine_responses_with_knowledge(self, responses, knowledge_subgraphs):
+        #TODO 是否可能存在多领域的agent的知识点可以综合到思维导图内
         combined = ""
         for department, response in responses.items():
             combined += f"【{department}的建议】\n{response}\n"
