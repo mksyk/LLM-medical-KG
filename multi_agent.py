@@ -1,8 +1,26 @@
+'''
+Author: mksyk cuirj04@gmail.com
+Date: 2024-09-11 13:26:54
+LastEditors: mksyk cuirj04@gmail.com
+LastEditTime: 2024-09-12 02:07:09
+FilePath: /LLM-medical-KG/multi_agent.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
+'''
+Author: mksyk cuirj04@gmail.com
+Date: 2024-09-11 10:31:20
+LastEditors: mksyk cuirj04@gmail.com
+LastEditTime: 2024-09-12 02:00:06
+FilePath: /LLM-medical-KG/multi_agent.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from cmner import *
 from py2neo import Graph
 import time
+
+
 
 def save_to_md(file_name, content):
     with open(file_name, 'a', encoding='utf-8') as f:
@@ -10,10 +28,12 @@ def save_to_md(file_name, content):
 
 file_name = "test_outputs.md"
 
+
 profile = "bolt://neo4j:Crj123456@localhost:7687"
 graph = Graph(profile)
 
-set_llm = 'llama'
+
+set_llm = 'Qwen'
 if set_llm == 'llama':
     model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
@@ -21,6 +41,7 @@ if set_llm == 'llama':
 elif set_llm =='Qwen':
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
     model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-7B-Instruct")
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
@@ -35,62 +56,17 @@ class MedicalAgent:
         self.tokenizer = tokenizer
         self.device = device
 
-    #应该同时接受其对应的1跳子图
-    #然后扩展子图数量
-    #然后对子图pruning
-    #此时pruning方法，参考一跳，2跳等的论文，不对，保持原来的方法
     def generate_response(self, query):
         # 构造适合该科室的prompt，并生成科室的回答
         prompt = f"""你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：{query}\n你的发言："""
         
-        #inputs的修改思路：基于论文Knowledge Prompting in Pre-trained Language Model for Natural Language Understanding修改
-        #改为基于思维导图的形式
-        #思维导图的验证方式，算法参考Boosting Language Models Reasoning with Chain-of-Knowledge Prompting的F2
-        #将query和对应思维导图堆叠
         inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
         output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
         response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
         save_to_md(file_name,f"-------{self.department_name}专家发言--------\n"+response)
 
         return response
-    
-    def generate_response2(self,query,kg):
-        # 构造适合该科室的prompt，并生成科室的回答
-        prompt = f"""你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：{query}\n你的发言："""
-        #inputs的修改思路：基于论文Knowledge Prompting in Pre-trained Language Model for Natural Language Understanding修改
-        #改为基于思维导图的形式
-        #思维导图的验证方式，算法参考Boosting Language Models Reasoning with Chain-of-Knowledge Prompting的F2
-        #将query和对应思维导图堆叠
-        inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
-        output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
-        response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
-        save_to_md(file_name,f"-------{self.department_name}专家发言--------\n"+response)
-        return response
-    
-    def seek_wide_knowledge(self,subgraphs):
-        extened_subgraphs = {}
-        for source_node,kgs in subgraphs:
-            #Cypher语句
-            pass
-        
-        return extened_subgraphs
-    
 
-    def infer_mindmap(self,subgraphs):
-        #example 编写
-        example = """"""
-        triple_in_text_form = triple_to_text_triple(subgraphs)
-        prompt = f""""""
-        inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
-        output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
-        mind_map = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
-        return mind_map
-
-    def evaluate_truth_of_mind_map(self,mind_map,query):
-        #判断mind_map的实体是否都来自于知识图谱
-        #判断mind_map转成自然语言后，其与query的匹配程度，即truth
-        pass
-        
 
 
 class LeaderAgent:
@@ -107,31 +83,28 @@ class LeaderAgent:
         print("__________提取实体___________")
         print(entities)
         print("____________________________")
+        relevant_agents = self.decide_agents_via_leader(entities)
         knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device,True)
-        relevant_agents,subgraphs_in_each_agent = self.decide_agents_via_leader(entities,query,knowledge_subgraphs)#TODO
-        #疑问：leader 期望根据获取的实体，将对应的子图交给对应的科室。特殊情况：其中某些子图不分配到某些科室，原因：科室不够充分、产生的子图为冗余子图，需要pruning(这个在上一行实现了)
-        responses = self.collect_responses(relevant_agents, query,subgraphs_in_each_agent)
-        combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)#需要通过加权投票机制，保留并融合相关科室智能体给出的答案，各科室对于不明确的信息，给出显式的反应
-        final_response = self.summarize_with_leader_agent(combined_responses)#格式化输出
+        responses = self.collect_responses(relevant_agents, query)
+        combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
+        final_response = self.summarize_with_leader_agent(combined_responses)
         return final_response
 
-    #query实际是query_entities
-    #examples是否需要修改
-    def decide_agents_via_leader(self,entities,query,knowledge_subgraphs):
+    def decide_agents_via_leader(self, query):
         # Few-shot 示例
         few_shot_examples = """
         这是几个输入输出的示例，你的输出应该仿照示例中的输出。
-        示例 1:
-        输入: 患者的主要症状或诊断实体包括：高血压、糖尿病。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
-        输出: 内科、内分泌科
+        # 示例 1:
+        # 输入: 患者的主要症状或诊断实体包括：高血压、糖尿病。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
+        # 输出: 内科、内分泌科
 
-        示例 2:
-        输入: 患者的主要症状或诊断实体包括：急性胃炎、腹痛。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
-        输出: 内科、消化科
+        # 示例 2:
+        # 输入: 患者的主要症状或诊断实体包括：急性胃炎、腹痛。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
+        # 输出: 内科、消化科
 
-        示例 3:
-        输入: 患者的主要症状或诊断实体包括：冠心病、胸痛。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
-        输出: 内科、心血管科
+        # 示例 3:
+        # 输入: 患者的主要症状或诊断实体包括：冠心病、胸痛。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
+        # 输出: 内科、心血管科
 
         请根据以下患者的主要症状或诊断选择参与会诊的科室。
         """
@@ -149,19 +122,16 @@ class LeaderAgent:
             if dept in response:
                 extracted_departments.append(dept)
         save_to_md(file_name,f"------departments------\n"+ ','.join(extracted_departments) + "\n-----------------------")
-        relevant_agent = [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
-        return relevant_agent,None
+        return [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
 
-    def collect_responses(self, agents, query,subgraphs_in_each_agent):
+    def collect_responses(self, agents, query):
         responses = {}
-        #TODO 增加subgraphs_in_each_agent分配给对应的agent，获取更多的信息，然后形成思维导图，
         for agent in agents:
             response = agent.generate_response(query)
             responses[agent.department_name] = response
         return responses
 
     def combine_responses_with_knowledge(self, responses, knowledge_subgraphs):
-        #TODO 是否可能存在多领域的agent的知识点可以综合到思维导图内
         combined = ""
         for department, response in responses.items():
             combined += f"【{department}的建议】\n{response}\n"
@@ -169,7 +139,7 @@ class LeaderAgent:
         return combined
 
     def summarize_with_leader_agent(self, combined_responses):
-        prompt = f"以下是各科室医生的会诊结果：\n{combined_responses}\n请你评判它们的答案，生成最终诊断总结。你的总结："
+        prompt = f"以下是各科室医生的会诊结果和相关知识：\n{combined_responses}\n请根据这些内容生成最终诊断总结。你的总结："
 
         inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(self.device)
         output = self.model.generate(**inputs, max_new_tokens = 1024, pad_token_id=self.tokenizer.eos_token_id)
@@ -178,7 +148,7 @@ class LeaderAgent:
 
 
 
-#疑问，是否需要对每个科室给出一个单独的模型model，然后微调
+
 agents = {dep: MedicalAgent(dep, model, tokenizer,device) for dep in departments}
 
 
