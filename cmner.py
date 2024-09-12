@@ -2,139 +2,76 @@ import argparse
 import numpy as np
 import pytorch_lightning as pl
 import torch.optim
-from transformers import BertTokenizerFast, get_linear_schedule_with_warmup, \
-    AutoModelForTokenClassification,AutoTokenizer, AutoModelForMaskedLM
+from transformers import AutoTokenizer, AutoModel,AutoModelForTokenClassification
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import json
 import faiss
 import re
 
-class MedicalNerModel(pl.LightningModule):
+class NER:
+    """
+    实体命名实体识别
+    """
+    def __init__(self,model_path) -> None:
+        """
+        Args:
+            model_path:模型地址
+        """
 
-    def __init__(self, args: argparse.Namespace):
-        super(MedicalNerModel, self).__init__()
-        self.args = args
-        self.tokenizer = BertTokenizerFast.from_pretrained('bert-base-chinese')
-        self.model = AutoModelForTokenClassification.from_pretrained("bert-base-chinese", num_labels=5)
+        self.model_path = model_path
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModelForTokenClassification.from_pretrained(model_path)
 
-        self.val_correct_num = 0
-        self.val_total_num = 0
-
-    def training_step(self, batch, batch_idx, *args, **kwargs):
-        inputs, targets, = batch
-        outputs = self.model(**inputs, labels=targets)
-        loss = outputs.loss
-        outputs = outputs.logits
-
-        self.log("train_loss", loss.item(), prog_bar=True)
-
-        return {
-            'loss': loss,
-            'outputs': outputs.argmax(-1) * inputs['attention_mask'],
-            'targets': targets,
-        }
-
-    def on_train_batch_end(self, outputs, batch, batch_idx: int):
-        targets_size = batch[1].size()
-        preds = outputs['outputs']
-        targets = outputs['targets']
-
-        correct_num = torch.all(preds == targets, dim=1).sum().item()
-        total_num = targets_size[0]
-
-        self.log("train_acc", correct_num / total_num, prog_bar=True)
-
-    def validation_step(self, batch, batch_idx, *args, **kwargs):
-        inputs, targets = batch
-        outputs = self.model(**inputs).logits
-
-        preds = outputs.argmax(-1) * inputs['attention_mask']
-
-        correct_num = torch.all(preds == targets, dim=1).sum().item()
-        total_num = targets.size(0)
-
-        self.log("val_acc", correct_num / total_num)
-
-        self.val_correct_num += correct_num
-        self.val_total_num += total_num
-
-        return {
-            'outputs': preds,
-            'targets': targets,
-        }
-
-    def on_validation_epoch_end(self) -> None:
-        print("Epoch",self.current_epoch, ". val_acc:", self.val_correct_num / self.val_total_num)
-        self.val_correct_num = 0
-        self.val_total_num = 0
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.args.lr)
-
-        t_total = len(self.args.train_loader) * self.args.epochs
-
-        warmup_steps = int(0.1 * t_total)
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer, num_warmup_steps=warmup_steps, num_training_steps=t_total
+    def ner(self,sentence:str) -> list:
+        """
+        命名实体识别
+        Args:
+            sentence:要识别的句子
+        Return:
+            实体列表:[{'type':'LOC','tokens':[...]},...]
+        """
+        ans = []
+        for i in range(0,len(sentence),500):
+            ans = ans + self._ner(sentence[i:i+500])
+        return ans
+    
+    def _ner(self,sentence:str) -> list:
+        if len(sentence) == 0: return []
+        inputs = self.tokenizer(
+            sentence, add_special_tokens=True, return_tensors="pt"
         )
-
-        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
-   
-    @staticmethod
-    def format_outputs(sentences, outputs):
-        preds = []
-        for i, pred_indices in enumerate(outputs):
-            words = []
-            start_idx = -1
-            end_idx = -1
-            flag = False
-            for idx, pred_idx in enumerate(pred_indices):
-                if pred_idx == 1:
-                    start_idx = idx
-                    flag = True
-                    continue
-
-                if flag and pred_idx != 2 and pred_idx != 3:
-                    # 出现了不应该出现的index
-                    # print("Abnormal prediction results for sentence", sentences[i])
-                    start_idx = -1
-                    end_idx = -1
-                    continue
-
-                if pred_idx == 3:
-                    end_idx = idx
-
-                    words.append({
-                        "start": start_idx,
-                        "end": end_idx + 1,
-                        "word": sentences[i][start_idx:end_idx+1]
-                    })
-                    start_idx = -1
-                    end_idx = -1
-                    flag = False
-                    continue
-
-            preds.append(words)
-
-        return preds
-
-
-def remove_punctuation_and_newlines(text):
-    """
-    删除输入字符串中的所有换行符和标点符号（包括中英文）。
-    
-    参数:
-    - text (str): 输入的字符串
-    
-    返回:
-    - str: 处理后的字符串
-    """
-    pattern = r"[^\w\s]"
-    cleaned_text = re.sub(pattern, "", text)  
-    cleaned_text = cleaned_text.replace("\n", "")
-    cleaned_text = cleaned_text.replace("\r", "") 
-    
-    return cleaned_text
+        
+        if torch.cuda.is_available():
+            self.model = self.model.to(torch.device('cuda:0'))
+            for key in inputs:
+                inputs[key] = inputs[key].to(torch.device('cuda:0'))
+            
+        with torch.no_grad():
+            logits = self.model(**inputs).logits
+        predicted_token_class_ids = logits.argmax(-1)
+        predicted_tokens_classes = [self.model.config.id2label[t.item()] for t in predicted_token_class_ids[0]]
+        entities = []
+        entity = {}
+        for idx, token in enumerate(self.tokenizer.tokenize(sentence,add_special_tokens=True)):
+            if 'B-' in predicted_tokens_classes[idx] or 'S-' in predicted_tokens_classes[idx]:
+                if len(entity) != 0:
+                    entities.append(entity)
+                entity = {}
+                entity['type'] = predicted_tokens_classes[idx].replace('B-','').replace('S-','')
+                entity['tokens'] = [token]
+            elif 'I-' in predicted_tokens_classes[idx] or 'E-' in predicted_tokens_classes[idx] or 'M-' in predicted_tokens_classes[idx]:
+                if len(entity) == 0:
+                    entity['type'] = predicted_tokens_classes[idx].replace('I-','').replace('E-','').replace('M-','')
+                    entity['tokens'] = []
+                entity['tokens'].append(token)
+            else:
+                if len(entity) != 0:
+                    entities.append(entity)
+                    entity = {}
+        if len(entity) > 0:
+            entities.append(entity)
+        return entities
 
 
 def extract_entities(question):
@@ -148,43 +85,48 @@ def extract_entities(question):
     - List[str]: 包含所有识别出的实体词的列表
 
     """
-    question = remove_punctuation_and_newlines(question)
-    tokenizer = BertTokenizerFast.from_pretrained('iioSnail/bert-base-chinese-medical-ner')
-    model = AutoModelForTokenClassification.from_pretrained("iioSnail/bert-base-chinese-medical-ner")
+    ner_model = NER('lixin12345/chinese-medical-ner')
+    entities = ner_model.ner(question)  # 调用extract_entities函数
+    entities = list(set([''.join(d.get('tokens', [])) for d in entities]))
+    
+    return entities
 
-    inputs = tokenizer([question], return_tensors="pt", padding=True, add_special_tokens=False)
-    outputs = model(**inputs)
-    outputs = outputs.logits.argmax(-1) * inputs['attention_mask']
+# #mean pooling
+# def get_entity_embeddings(entities, device):
+#     """
+#     使用bert计算取得的实体的embedding,使用mean pooling
+#     """
+#     tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
+#     model = AutoModel.from_pretrained("bert-base-chinese").to(device)
+#     embeddings = []
+#     count = 0 
+#     for entity in entities:
+#         inputs = tokenizer(entity, return_tensors="pt").to(device)
+#         outputs = model(**inputs, output_hidden_states=True)
+#         last_hidden_state = outputs.hidden_states[-1]
+#         embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
+#         embeddings.append(embedding)
+#         count += 1
+#         # print(f"{count} : embedding of {entity} finish.")
     
-    # 格式化输出
-    formatted_output = MedicalNerModel.format_outputs([question], outputs)
-    
-    # 提取所有实体词
-    words = [entity['word'] for entity_list in formatted_output for entity in entity_list]
-    
-    return words
+#     return np.vstack(embeddings)
 
-    
+
+#cls
 def get_entity_embeddings(entities, device):
     """
-    使用LLM计算取得的实体的embedding
+    使用bert计算取得的实体的embeddings
     """
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
-    model = AutoModelForMaskedLM.from_pretrained("bert-base-chinese").to(device)
+    model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2').to(device)
     embeddings = []
-    count = 0 
-    for entity in entities:
-        inputs = tokenizer(entity, return_tensors="pt").to(device)
-        outputs = model(**inputs, output_hidden_states=True)
-        last_hidden_state = outputs.hidden_states[-1]
-        embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
-        embeddings.append(embedding)
-        count += 1
-        # print(f"{count} : embedding of {entity} finish.")
     
-    return np.vstack(embeddings)
-
-
+    for entity in entities:
+        with torch.no_grad():  # 避免计算梯度
+            outputs = model.encode(entity)
+        embeddings.append(outputs)
+        # print(f'{entity} finish.')
+    
+    return np.vstack(embeddings)  # 返回所有实体的嵌入
 
 def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     """
@@ -192,7 +134,7 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     """
     embeddings = get_entity_embeddings(entities, device)
     print(embeddings.shape)
-    index_with_ids = faiss.read_index('data/node_embeddings_bert.index')
+    index_with_ids = faiss.read_index('data/node_embeddings.index')
 
     distances, indices = index_with_ids.search(embeddings, k)
 
@@ -213,6 +155,7 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
 
     return relative_nodenames
 
+
 def extract_subgraph(relative_nodenames, graph, depth = 1):
     """
     对于图中的节点，返回指定阶数的子图。
@@ -230,10 +173,12 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
             RETURN DISTINCT nodes[idx].name AS source_node, rels[idx].name AS relationship, nodes[idx+1].name AS target_node
             """
             result = graph.run(query).data()
-            # print(f"Subgraph of {node} (from {entity}) finished.")
+            print(f"Subgraph of {node} (from {entity}) finished.")
             subgraphs[node] = result
 
     return subgraphs
+
+
 
 
 def triple_to_text(subgraphs):
