@@ -119,12 +119,14 @@ def get_entity_embeddings(entities, device):
     """
     model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2').to(device)
     embeddings = []
-    
+    cnt = 0
     for entity in entities:
         with torch.no_grad():  # 避免计算梯度
             outputs = model.encode(entity)
         embeddings.append(outputs)
-        # print(f'{entity} finish.')
+        cnt+=1
+        print(cnt+ '/' + len(entities) + ' ' + f'{entity} finish.')
+        
     
     return np.vstack(embeddings)  # 返回所有实体的嵌入
 

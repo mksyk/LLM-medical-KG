@@ -1,2 +1,5 @@
 Chinese-medical-dialogue-data/
 data/
+__pycache__/
+.gitignore
+test_outputs.md
