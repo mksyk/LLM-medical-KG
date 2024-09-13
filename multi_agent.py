@@ -1,22 +1,9 @@
-'''
-Author: mksyk cuirj04@gmail.com
-Date: 2024-09-11 10:31:20
-LastEditors: mksyk cuirj04@gmail.com
-LastEditTime: 2024-09-11 11:05:20
-FilePath: /LLM-medical-KG/multi_agent.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
+
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from cmner import *
 from py2neo import Graph
 import time
-
-
-
-def save_to_md(file_name, content):
-    with open(file_name, 'a', encoding='utf-8') as f:
-        f.write(content + '\n')
 
 file_name = "test_outputs.md"
 
@@ -71,11 +58,7 @@ class LeaderAgent:
 
     def consult(self, query):
         save_to_md(file_name,query)
-        entities = extract_entities(query)
-        print("__________提取实体___________")
-        print(entities)
-        print("____________________________")
-        relevant_agents = self.decide_agents_via_leader(entities)
+        relevant_agents = self.decide_agents_via_leader(query)
         knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device,True)
         responses = self.collect_responses(relevant_agents, query)
         combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
@@ -158,4 +141,4 @@ final_answer = leader_agent.consult(query)
 print(f"最终问诊结果: {final_answer}")
 save_to_md(file_name,f"---------------\n"+f"最终问诊结果:\n {final_answer}")
 end_time = time.time()
-print(f"运行时长:{end_time - start_time}") 
+timeRecord(start_time,end_time)

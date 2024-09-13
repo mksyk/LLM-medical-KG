@@ -73,6 +73,18 @@ class NER:
             entities.append(entity)
         return entities
 
+def timeRecord(start_time, end_time):
+    total_seconds = end_time - start_time
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    if total_seconds < 60:
+        print(f"运行时长: {seconds:.2f} 秒")
+    elif total_seconds < 3600:
+        print(f"运行时长: {int(minutes)} 分钟 {int(seconds)} 秒")
+    else:
+        print(f"运行时长: {int(hours)} 小时 {int(minutes)} 分钟 {int(seconds)} 秒")
+
 
 def extract_entities(question):
     """
@@ -91,28 +103,6 @@ def extract_entities(question):
     
     return entities
 
-# #mean pooling
-# def get_entity_embeddings(entities, device):
-#     """
-#     使用bert计算取得的实体的embedding,使用mean pooling
-#     """
-#     tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
-#     model = AutoModel.from_pretrained("bert-base-chinese").to(device)
-#     embeddings = []
-#     count = 0 
-#     for entity in entities:
-#         inputs = tokenizer(entity, return_tensors="pt").to(device)
-#         outputs = model(**inputs, output_hidden_states=True)
-#         last_hidden_state = outputs.hidden_states[-1]
-#         embedding = last_hidden_state.mean(dim=1).cpu().detach().numpy()
-#         embeddings.append(embedding)
-#         count += 1
-#         # print(f"{count} : embedding of {entity} finish.")
-    
-#     return np.vstack(embeddings)
-
-
-#cls
 def get_entity_embeddings(entities, device):
     """
     使用bert计算取得的实体的embeddings
@@ -125,10 +115,10 @@ def get_entity_embeddings(entities, device):
             outputs = model.encode(entity)
         embeddings.append(outputs)
         cnt+=1
-        print(cnt+ '/' + len(entities) + ' ' + f'{entity} finish.')
+        print(f'{cnt}/{len(entities)} {entity}')
         
     
-    return np.vstack(embeddings)  # 返回所有实体的嵌入
+    return np.vstack(embeddings) 
 
 def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     """
@@ -158,9 +148,9 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     return relative_nodenames
 
 
-def extract_subgraph(relative_nodenames, graph, depth = 1):
+def extract_subgraph(relative_nodenames, graph, depth = 3):
     """
-    对于图中的节点，返回指定阶数的子图。
+    对于图中的节点，返回指定阶数的子图，保留关系方向。
     """
     subgraphs = {}
 
@@ -168,11 +158,28 @@ def extract_subgraph(relative_nodenames, graph, depth = 1):
         for node in rel_nodes:
             query = f"""
             MATCH (n {{name: '{node}'}}) 
-            OPTIONAL MATCH path=(n)-[r*1..{depth}]-(m) 
-            WITH n, relationships(path) AS rels, nodes(path) AS nodes
+            OPTIONAL MATCH path = (n)-[r*1..{depth}]-(m) 
+            WITH relationships(path) AS rels, nodes(path) AS nodes
             WHERE size(rels) > 0
             UNWIND range(0, size(rels)-1) AS idx
-            RETURN DISTINCT nodes[idx].name AS source_node, rels[idx].name AS relationship, nodes[idx+1].name AS target_node
+            WITH nodes[idx] AS source_node, nodes[idx+1] AS target_node, 
+                rels[idx].name AS relationship, 
+                startNode(rels[idx]) AS start_node, endNode(rels[idx]) AS end_node
+            WHERE source_node IS NOT NULL AND target_node IS NOT NULL AND relationship IS NOT NULL
+            WITH 
+                CASE 
+                    WHEN start_node <> source_node THEN target_node
+                    ELSE source_node
+                END AS final_source_node,
+                CASE 
+                    WHEN start_node <> source_node THEN source_node
+                    ELSE target_node
+                END AS final_target_node,
+                relationship
+            RETURN DISTINCT 
+                final_source_node.name AS source_node, 
+                relationship AS relationship, 
+                final_target_node.name AS target_node
             """
             result = graph.run(query).data()
             print(f"Subgraph of {node} (from {entity}) finished.")
@@ -195,34 +202,31 @@ def triple_to_text(subgraphs):
             relationship = triple['relationship']
             target = triple['target_node']
 
+            # 根据不同的关系类型生成自然语言描述
             if relationship == "症状":
-                generated_texts.append(f"{source}有可能是{target}的症状。")
+                generated_texts.append(f"{source}可能表现{target}症状。")
             elif relationship == "并发症":
-                generated_texts.append(f"{source}可能是{target}的并发症。")
+                generated_texts.append(f"{source}可能有{target}的并发症。")
             elif relationship == "推荐食谱":
-                generated_texts.append(f"{source}的推荐食谱包括{target}。")
+                generated_texts.append(f"患有{source}时，推荐的食谱包括{target}。")
             elif relationship == "忌吃":
-                generated_texts.append(f"{source}时忌吃{target}。")
+                generated_texts.append(f"患有{source}时，应避免食用{target}。")
             elif relationship == "宜吃":
-                generated_texts.append(f"{source}时宜吃{target}。")
+                generated_texts.append(f"患有{source}时，建议食用{target}。")
             elif relationship == "属于":
                 generated_texts.append(f"{source}属于{target}。")
             elif relationship == "常用药品":
-                generated_texts.append(f"{source}的常用药品是{target}。")
+                generated_texts.append(f"治疗{source}常用的药品有{target}。")
             elif relationship == "生产药品":
                 generated_texts.append(f"{source}生产的药品包括{target}。")
             elif relationship == "好评药品":
-                generated_texts.append(f"{source}的好评药品包括{target}。")
+                generated_texts.append(f"治疗{source}的好评药品包括{target}。")
             elif relationship == "诊断检查":
-                generated_texts.append(f"{source}可以通过{target}来诊断检查。")
+                generated_texts.append(f"诊断{source}可以通过{target}进行检查。")
             elif relationship == "所属科室":
-                generated_texts.append(f"{source}属于{target}科室。")
+                generated_texts.append(f"{source}属于{target}。")
             else:
                 generated_texts.append(f"{source}与{target}的关系是{relationship}。")
-
-    # # 打印生成的文本列表
-    # for text in generated_texts:
-    #     print(text)
 
     return generated_texts
 
@@ -249,15 +253,11 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
     return texts_relative
     
 
-def generate_subgraphs(question, graph, model, tokenizer,device,leader = False):
+def generate_subgraphs(question, graph, model, tokenizer,device):
     entities = extract_entities(question)
     relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)
-    if leader:
-        subgraphs = extract_subgraph(relative_nodenames,graph)
-        subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
-    else:
-        subgraphs = extract_subgraph(relative_nodenames,graph,3)
-        subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
+    subgraphs = extract_subgraph(relative_nodenames,graph)
+    subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
     print(subgraphs)
 
     return subgraphs
