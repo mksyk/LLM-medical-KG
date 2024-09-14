@@ -1,9 +1,9 @@
 
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from cmner import *
 from py2neo import Graph
 import time
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 file_name = "test_outputs.md"
 
@@ -12,7 +12,7 @@ profile = "bolt://neo4j:Crj123456@localhost:7687"
 graph = Graph(profile)
 
 
-set_llm = 'Qwen'
+set_llm = 'deepseek'
 if set_llm == 'llama':
     model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
@@ -20,6 +20,14 @@ if set_llm == 'llama':
 elif set_llm =='Qwen':
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
     model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-7B-Instruct")
+elif set_llm == 'deepseek':
+    model_name = "deepseek-ai/DeepSeek-V2-Lite-Chat"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.bfloat16).cuda()
+    model.generation_config = GenerationConfig.from_pretrained(model_name)
+    model.generation_config.pad_token_id = model.generation_config.eos_token_id
+
+
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,7 +46,7 @@ class MedicalAgent:
     def generate_response(self, query):
         # 构造适合该科室的prompt，并生成科室的回答
         prompt = f"""你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：{query}\n你的发言："""
-        
+        print(f"{self.department_name}发言中..." )
         inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
         output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
         response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
@@ -59,43 +67,15 @@ class LeaderAgent:
     def consult(self, query):
         save_to_md(file_name,query)
         relevant_agents = self.decide_agents_via_leader(query)
-        knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device,True)
+        knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device)
         responses = self.collect_responses(relevant_agents, query)
         combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
         final_response = self.summarize_with_leader_agent(combined_responses)
         return final_response
 
     def decide_agents_via_leader(self, query):
-        # Few-shot 示例
-        few_shot_examples = """
-        这是几个输入输出的示例，你的输出应该仿照示例中的输出。
-        示例 1:
-        输入: 患者的主要症状或诊断实体包括：高血压、糖尿病。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
-        输出: 内科、内分泌科
-
-        示例 2:
-        输入: 患者的主要症状或诊断实体包括：急性胃炎、腹痛。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
-        输出: 内科、消化科
-
-        示例 3:
-        输入: 患者的主要症状或诊断实体包括：冠心病、胸痛。请根据这些信息，从以下科室中选择参与会诊的科室：内科、外科、五官科、皮肤性病科、儿科、妇产科、肿瘤科、其他科室。
-        输出: 内科、心血管科
-
-        请根据以下患者的主要症状或诊断选择参与会诊的科室。
-        """
-
-        prompt = f"{few_shot_examples}\n患者的病情描述：{query}。请从以下科室中选择参与会诊的科室：{','.join(departments)}。你选择的科室："
-        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(self.device)
-
-        output = self.model.generate(
-            max_length =  len(prompt) + 25,
-            **inputs,
-        )
-        response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
-        extracted_departments = []
-        for dept in departments:
-            if dept in response:
-                extracted_departments.append(dept)
+        
+        extracted_departments = departments#暂时先不要这个挑的过程了
         save_to_md(file_name,f"------departments------\n"+ ','.join(extracted_departments) + "\n-----------------------")
         return [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
 

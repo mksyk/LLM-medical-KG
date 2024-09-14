@@ -73,6 +73,12 @@ class NER:
             entities.append(entity)
         return entities
 
+def save_to_md(file_name, content):
+    with open(file_name, 'a', encoding='utf-8') as file:
+        file.write(content)
+
+    # print(f"Content successfully saved to {file_name}")
+
 def timeRecord(start_time, end_time):
     total_seconds = end_time - start_time
     hours, remainder = divmod(total_seconds, 3600)
@@ -148,7 +154,7 @@ def get_relative_nodenames(entities, model, tokenizer, device,k=2):
     return relative_nodenames
 
 
-def extract_subgraph(relative_nodenames, graph, depth = 3):
+def extract_subgraph(relative_nodenames, graph, depth = 1):
     """
     对于图中的节点，返回指定阶数的子图，保留关系方向。
     """
