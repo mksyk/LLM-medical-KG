@@ -1,3 +1,11 @@
+'''
+Author: mksyk cuirj04@gmail.com
+Date: 2024-09-14 09:42:48
+LastEditors: mksyk cuirj04@gmail.com
+LastEditTime: 2024-09-18 08:14:43
+FilePath: /LLM-medical-KG/multi_agent.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
 
 from cmner import *
 from py2neo import Graph
@@ -30,7 +38,7 @@ elif set_llm == 'deepseek':
 
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
 departments = ['内科', '外科', '五官科', '皮肤性病科', '儿科', '妇产科', '肿瘤科', '传染科','中医科','急诊科','精神科','营养科','心理科','男科','其他科室']
@@ -50,7 +58,7 @@ class MedicalAgent:
         inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
         output = self.model.generate(**inputs, max_new_tokens = 500, pad_token_id=self.tokenizer.eos_token_id)
         response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
-        save_to_md(file_name,f"-------{self.department_name}专家发言--------\n"+response)
+        save_to_md(file_name,f"\n-------{self.department_name}专家发言--------\n"+response)
 
         return response
 
@@ -67,7 +75,7 @@ class LeaderAgent:
     def consult(self, query):
         save_to_md(file_name,query)
         relevant_agents = self.decide_agents_via_leader(query)
-        knowledge_subgraphs = generate_subgraphs(query,graph, model, tokenizer,device)
+        knowledge_subgraphs = generate_subgraphs(query,graph,device)
         responses = self.collect_responses(relevant_agents, query)
         combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
         final_response = self.summarize_with_leader_agent(combined_responses)

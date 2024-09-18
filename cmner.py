@@ -126,7 +126,7 @@ def get_entity_embeddings(entities, device):
     
     return np.vstack(embeddings) 
 
-def get_relative_nodenames(entities, model, tokenizer, device,k=2):
+def get_relative_nodenames(entities,device,k=2):
     """
     对于提取的实体，使其与图中的节点对齐，返回图中的相关节点
     """
@@ -236,7 +236,7 @@ def triple_to_text(subgraphs):
 
     return generated_texts
 
-def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarity_threshold=None):
+def pruning(subgraphs, question, device, top_n=None, similarity_threshold=None):
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
     """
@@ -259,11 +259,11 @@ def pruning(subgraphs, question, model, tokenizer, device, top_n=None, similarit
     return texts_relative
     
 
-def generate_subgraphs(question, graph, model, tokenizer,device):
+def generate_subgraphs(question, graph,device):
     entities = extract_entities(question)
-    relative_nodenames = get_relative_nodenames(entities, model, tokenizer, device)
+    relative_nodenames = get_relative_nodenames(entities, device)
     subgraphs = extract_subgraph(relative_nodenames,graph)
-    subgraphs = pruning(subgraphs, question, model, tokenizer, device, top_n =50)
+    subgraphs = pruning(subgraphs, question, device, top_n =50)
     print(subgraphs)
 
     return subgraphs
