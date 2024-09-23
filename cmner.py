@@ -1,13 +1,15 @@
 import argparse
 import numpy as np
-import pytorch_lightning as pl
 import torch.optim
-from transformers import AutoTokenizer, AutoModel,AutoModelForTokenClassification
+from transformers import AutoTokenizer, AutoModel,AutoModelForTokenClassification, AutoModelForMaskedLM
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import json
 import faiss
 import re
+import os
+
+
 
 class NER:
     """
@@ -103,35 +105,85 @@ def extract_entities(question):
     - List[str]: 包含所有识别出的实体词的列表
 
     """
-    ner_model = NER('lixin12345/chinese-medical-ner')
+    ner_model = NER('/root/.cache/huggingface/hub/models--lixin12345--chinese-medical-ner/snapshots/5765a4d70ecf76d279d9f98bf4cdf0c52d388c7c')
     entities = ner_model.ner(question)  # 调用extract_entities函数
     entities = list(set([''.join(d.get('tokens', [])) for d in entities]))
     
     return entities
 
 def get_entity_embeddings(entities, device):
-    """
-    使用bert计算取得的实体的embeddings
-    """
-    model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2').to(device)
-    embeddings = []
-    cnt = 0
-    for entity in entities:
-        with torch.no_grad():  # 避免计算梯度
-            outputs = model.encode(entity)
-        embeddings.append(outputs)
-        cnt+=1
-        print(f'{cnt}/{len(entities)} {entity}')
-        
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
+    model = AutoModel.from_pretrained("bert-base-chinese")
     
-    return np.vstack(embeddings) 
+    model.to(device)
+    inputs = tokenizer(entities, padding=True, truncation=True, return_tensors="pt").to(device)
 
-def get_relative_nodenames(entities,device,k=2):
+    with torch.no_grad():
+        outputs = model(**inputs)
+    last_hidden_state = outputs.last_hidden_state
+    
+    # 取 [CLS] token
+    embeddings = last_hidden_state[:, 0, :]
+
+    return embeddings.cpu().numpy()
+
+def get_entity_embeddings_batch(entities, device, batch_size=8):
+    # 加载 BERT 模型和分词器
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
+    model = AutoModel.from_pretrained("bert-base-chinese")
+    model.to(device)
+
+    all_embeddings = []
+    
+    for i in range(0, len(entities), batch_size):
+        batch = entities[i:i+batch_size]
+        inputs = tokenizer(batch, padding=True, truncation=True, return_tensors="pt").to(device)
+        
+        with torch.no_grad():
+            outputs = model(**inputs)
+
+        embeddings = outputs.last_hidden_state[:, 0, :]
+        all_embeddings.append(embeddings.cpu().numpy())
+        print(f"{i}/{len(entities)}")
+
+    return np.concatenate(all_embeddings, axis=0)
+
+def get_sentence_embeddings_batch(texts, tokenizer, model, device, batch_size=8):
+    all_embeddings = []
+
+    # 将文本分批处理
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i:i+batch_size]
+        
+        # 编码输入
+        inputs = tokenizer(batch_texts, return_tensors="pt", truncation=True, padding=True, max_length=512).to(device)
+
+        # 启用 output_hidden_states=True
+        with torch.no_grad():
+            outputs = model(**inputs, output_hidden_states=True)
+        
+        # 隐藏状态位于 outputs.hidden_states 中
+        hidden_states = outputs.hidden_states  # List of tensors (layers)
+        
+        # 提取最后一层隐藏状态的 CLS token
+        cls_embedding = hidden_states[-1][:, 0, :]  # 最后一层的第一个 token (CLS token)
+        
+        # 将结果添加到总 embedding 列表中
+        all_embeddings.append(cls_embedding.cpu().numpy())
+        print(f"{i}/{len(texts)}")
+
+
+    # 合并所有批次的 embedding
+    return np.concatenate(all_embeddings, axis=0)
+
+
+def get_relative_nodenames(entities, device, k=5):
     """
     对于提取的实体，使其与图中的节点对齐，返回图中的相关节点
     """
     embeddings = get_entity_embeddings(entities, device)
-    print(embeddings.shape)
+    print(embeddings.shape)  
+
     index_with_ids = faiss.read_index('data/node_embeddings.index')
 
     distances, indices = index_with_ids.search(embeddings, k)
@@ -255,6 +307,8 @@ def pruning(subgraphs, question, device, top_n=None, similarity_threshold=None):
         texts_relative = [texts_from_subgraphs[i] for i in sorted_indices if similarities[i] >= similarity_threshold]
     else:
         raise ValueError("You must specify either top_n or similarity_threshold.")
+    save_to_md('test_outputs.md','\nquestion相关内容\n')
+    save_to_md('test_outputs.md','\n'.join(texts_relative) + '\n')
 
     return texts_relative
     
@@ -267,3 +321,24 @@ def generate_subgraphs(question, graph,device):
     print(subgraphs)
 
     return subgraphs
+
+
+def extract_depKB(question, dep,tokenizer,model, device,model_name,top_n=20):
+    print(f"{dep}科室检索知识中...")
+    base_path = '/root/LLM-medical-KG/data/department_KB_' + model_name
+    dep_path = os.path.join(base_path, dep)
+    index_file = os.path.join(dep_path, 'embeddings.index')
+    mapping_file = os.path.join(dep_path, 'mapping.json')
+    
+    with open(mapping_file, 'r', encoding='utf-8') as f:
+        mapping = json.load(f)
+    
+    question_embedding = get_sentence_embeddings_batch([question],tokenizer,model, device)
+
+    index = faiss.read_index(index_file)
+    D, I = index.search(np.array(question_embedding).astype(np.float32), top_n)
+    
+    top_n_strings = [mapping[str(i)] for i in I[0]]
+    for string in top_n_strings:
+        print(string)
+    return top_n_strings

@@ -2,7 +2,7 @@
 Author: mksyk cuirj04@gmail.com
 Date: 2024-09-11 07:52:53
 LastEditors: mksyk cuirj04@gmail.com
-LastEditTime: 2024-09-11 10:09:44
+LastEditTime: 2024-09-19 03:15:07
 FilePath: /LLM-medical-KG/node_to_faiss.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -19,11 +19,8 @@ profile = "bolt://neo4j:Crj123456@localhost:7687"
 graph = Graph(profile)
 
 
-tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
-model = AutoModelForMaskedLM.from_pretrained("bert-base-chinese")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
 # query = "MATCH (n) RETURN n.name"
 # result = graph.run(query)
@@ -42,7 +39,7 @@ node_names = list(loaded_data.values())
 all_embeddings = get_entity_embeddings(node_names, device)
 
 
-dimension = 768
+dimension = all_embeddings.shape[1]
 M = 16
 ef_construction = 200
 
@@ -58,4 +55,4 @@ index_with_ids = faiss.IndexIDMap(index)  # 包装 index 以便存储 ID
 index_with_ids.add_with_ids(all_embeddings, ids)  # 将向量和对应的 ID 添加到索引中
 
 # 保存索引到文件
-faiss.write_index(index_with_ids, "data/node_embeddings_bert.index")  # 保存索引文件
+faiss.write_index(index_with_ids, "data/node_embeddings.index")  # 保存索引文件
