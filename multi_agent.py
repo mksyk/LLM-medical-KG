@@ -2,7 +2,7 @@
 Author: mksyk cuirj04@gmail.com
 Date: 2024-09-14 09:42:48
 LastEditors: mksyk cuirj04@gmail.com
-LastEditTime: 2024-09-23 10:35:33
+LastEditTime: 2024-09-23 14:36:24
 FilePath: /LLM-medical-KG/multi_agent.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -12,56 +12,57 @@ from py2neo import Graph
 import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+from datetime import datetime
+import os
 
+# 定义一些文件和路径
 file_name = "test_outputs.md"
-
-
 profile = "bolt://neo4j:Crj123456@localhost:7687"
-graph = Graph(profile)
 
+# 定义科室
+departments = ['内科', '外科', '五官科', '皮肤性病科', '儿科', '妇产科', '肿瘤科', '传染科', '中医科', '急诊科', '精神科', '营养科', '心理科', '男科', '其他科室']
 
-model_name = 'deepseek'
-if model_name == 'llama':
-    model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
-elif model_name =='Qwen':
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
-    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
-elif model_name == 'deepseek':
-    tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat", trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat", trust_remote_code=True)
-    model.generation_config = GenerationConfig.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat")
-    model.generation_config.pad_token_id = model.generation_config.eos_token_id
+# 检查 results 文件夹是否存在
+if not os.path.exists("results"):
+    os.makedirs("results")
 
+# 连接到 neo4j
+def connect_to_graph():
+    graph = Graph(profile)
+    return graph
 
+# 加载模型和 tokenizer
+def load_model_and_tokenizer(model_name,device):
+    if model_name == 'llama':
+        model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
+    elif model_name == 'Qwen':
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+    elif model_name == 'deepseek':
+        tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat", trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat", trust_remote_code=True)
+        model.generation_config = GenerationConfig.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat")
+        model.generation_config.pad_token_id = model.generation_config.eos_token_id
 
+    model.to(device)
+    return model, tokenizer
 
-device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
-model.to(device)
-
-departments = ['内科', '外科', '五官科', '皮肤性病科', '儿科', '妇产科', '肿瘤科', '传染科','中医科','急诊科','精神科','营养科','心理科','男科','其他科室']
 class MedicalAgent:
-    def __init__(self, department_name, model, tokenizer, device):
+    def __init__(self, department_name, model,model_name, tokenizer, device):
         self.department_name = department_name
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-
+        self.model_name = model_name
     def generate_response(self, query):
         # 使用 extract_depKB 函数获取与 query 匹配的科室知识
-        top_n_strings = extract_depKB(query, self.department_name,self.tokenizer,self.model,device,model_name, top_n=10)  # 假设返回前 10 个相关字符串
-        
+        top_n_strings = extract_depKB(query, self.department_name, self.tokenizer, self.model, self.device, self.model_name, top_n=10)
         # 将知识库的字符串列表拼接成一段提示
         kb_prompt = "\n".join([f"{i+1}. {s}" for i, s in enumerate(top_n_strings)])
-        
         # 构造包含科室知识和患者信息的 prompt
-        prompt = f"""你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：
-患者信息：{query}
-与该问题相关的知识：
-{kb_prompt}
-你的发言："""
-        
+        prompt = f"你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：\n患者信息：{query}\n与该问题相关的知识：\n{kb_prompt}\n你的发言："
         print(f"{self.department_name}发言中...")
 
         # 生成科室的回答
@@ -74,9 +75,8 @@ class MedicalAgent:
 
         return response
 
-
 class LeaderAgent:
-    def __init__(self, model, tokenizer, agents, graph,device):
+    def __init__(self, model, tokenizer, agents, graph, device):
         self.model = model  
         self.tokenizer = tokenizer
         self.agents = agents  
@@ -84,18 +84,17 @@ class LeaderAgent:
         self.device = device
 
     def consult(self, query):
-        save_to_md(file_name,query)
+        save_to_md(file_name, '\nquery:\n' + query + '\n')
         relevant_agents = self.decide_agents_via_leader(query)
-        knowledge_subgraphs = generate_subgraphs(query,graph,device)
+        knowledge_subgraphs = generate_subgraphs(query, self.graph, self.device)
         responses = self.collect_responses(relevant_agents, query)
         combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
         final_response = self.summarize_with_leader_agent(combined_responses)
         return final_response
 
     def decide_agents_via_leader(self, query):
-        
-        extracted_departments = departments#暂时先不要这个挑的过程了
-        save_to_md(file_name,f"------departments------\n"+ ','.join(extracted_departments) + "\n-----------------------\n")
+        extracted_departments = departments  # 暂时不要科室选择过程
+        save_to_md(file_name, f"\n------departments------\n" + ','.join(extracted_departments) + "\n-----------------------\n")
         return [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
 
     def collect_responses(self, agents, query):
@@ -113,31 +112,32 @@ class LeaderAgent:
         return combined
 
     def summarize_with_leader_agent(self, combined_responses):
-        prompt = f"以下是各科室医生的会诊结果和相关知识：\n{combined_responses}\n请根据这些内容生成最终诊断总结,你的总结应当参考各个科室专家的建议，做到尽可能的全面，并排除你认为有误的信息。你的总结："
-
+        prompt = f"以下是各科室医生的会诊结果和相关知识：\n{combined_responses}\n请根据这些内容生成最终诊断总结。你的总结应当参考各个科室专家的建议，做到尽可能的全面，并排除你认为有误的信息。你的总结："
         inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(self.device)
-        output = self.model.generate(**inputs, max_new_tokens = 1024, pad_token_id=self.tokenizer.eos_token_id)
+        output = self.model.generate(**inputs, max_new_tokens=1024, pad_token_id=self.tokenizer.eos_token_id)
         final_response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
-        return final_response 
+        return final_response
 
+# 封装整个咨询流程的主函数
+def run_medical_consultation(query, model_name='deepseek',device = "cuda" if torch.cuda.is_available() else "cpu"):
+    # 1. 连接知识图谱
+    graph = connect_to_graph()
+    
+    # 2. 加载模型和 tokenizer
+    model, tokenizer = load_model_and_tokenizer(model_name,device)
 
+    # 3. 初始化科室智能体
+    agents = {dep: MedicalAgent(dep, model,model_name, tokenizer, device) for dep in departments}
 
+    # 4. 初始化 LeaderAgent
+    leader_agent = LeaderAgent(model, tokenizer, agents, graph, device)
 
-agents = {dep: MedicalAgent(dep, model, tokenizer,device) for dep in departments}
+    # 5. 执行咨询流程
+    start_time = time.time()
+    final_answer = leader_agent.consult(query)
+    print(f"最终问诊结果: {final_answer}")
+    save_to_md(file_name, f"\n---------------\n最终问诊结果:\n {final_answer}")
+    end_time = time.time()
+    timeRecord(start_time, end_time)
 
-
-leader_agent = LeaderAgent(model, tokenizer, agents,graph,device)
-
-
-query = """患者既往慢阻肺多年;
-冠心病史6年，平素规律服用心可舒、保心丸等控制可;双下肢静脉血栓3年，保守治疗效果可;
-左侧腹股沟斜疝无张力修补术后2年。
-否认"高血压、糖尿病"等慢性病病史，否认"肝炎、结核"等传染病病史及其密切接触史，
-否认其他手术、重大外伤、输血史，否认"食物、药物、其他"等过敏史，预防接种史随社会。
-"""
-start_time = time.time()
-final_answer = leader_agent.consult(query)
-print(f"最终问诊结果: {final_answer}")
-save_to_md(file_name,f"\n---------------\n"+f"最终问诊结果:\n {final_answer}")
-end_time = time.time()
-timeRecord(start_time,end_time)
+    return final_answer

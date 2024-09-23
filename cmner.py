@@ -177,7 +177,7 @@ def get_sentence_embeddings_batch(texts, tokenizer, model, device, batch_size=8)
     return np.concatenate(all_embeddings, axis=0)
 
 
-def get_relative_nodenames(entities, device, k=5):
+def get_relative_nodenames(entities, device, k=2):
     """
     对于提取的实体，使其与图中的节点对齐，返回图中的相关节点
     """
@@ -307,8 +307,8 @@ def pruning(subgraphs, question, device, top_n=None, similarity_threshold=None):
         texts_relative = [texts_from_subgraphs[i] for i in sorted_indices if similarities[i] >= similarity_threshold]
     else:
         raise ValueError("You must specify either top_n or similarity_threshold.")
-    save_to_md('test_outputs.md','\nquestion相关内容\n')
-    save_to_md('test_outputs.md','\n'.join(texts_relative) + '\n')
+    # save_to_md('test_outputs.md','\nquestion相关内容\n')
+    # save_to_md('test_outputs.md','\n'.join(texts_relative) + '\n')
 
     return texts_relative
     
