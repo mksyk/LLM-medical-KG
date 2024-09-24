@@ -6,7 +6,7 @@ from torch.cuda import is_available
 from bert_score import score
 
 model_name = 'deepseek'
-device = "cuda" if is_available() else "cpu"
+device = "cuda:4" if is_available() else "cpu"
 
 if not os.path.exists("results"):
     os.makedirs("results")
@@ -20,7 +20,7 @@ def get_original_model_output(query,model_name,device):
     model, tokenizer = load_model_and_tokenizer(model_name, device)
     inputs = tokenizer(query, return_tensors="pt").to(device)
     outputs = model.generate(**inputs,max_new_tokens = 1024)
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(query):].strip()
     print(response)
     return response
 
@@ -64,7 +64,7 @@ for entry in data:
     results.append(result)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-result_file_path = f"results/{timestamp}.json"
+result_file_path = f"results/{model_name}_{timestamp}.json"
 
 with open(result_file_path, "w", encoding="utf-8") as f:
     json.dump(results, f, ensure_ascii=False, indent=4)
