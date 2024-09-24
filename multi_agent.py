@@ -2,7 +2,7 @@
 Author: mksyk cuirj04@gmail.com
 Date: 2024-09-14 09:42:48
 LastEditors: mksyk cuirj04@gmail.com
-LastEditTime: 2024-09-23 14:36:24
+LastEditTime: 2024-09-24 07:01:33
 FilePath: /LLM-medical-KG/multi_agent.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -34,9 +34,8 @@ def connect_to_graph():
 # 加载模型和 tokenizer
 def load_model_and_tokenizer(model_name,device):
     if model_name == 'llama':
-        model_name_or_path = "/root/.cache/huggingface/hub/models--shenzhi-wang--Llama3.1-8B-Chinese-Chat/snapshots/404a735a6205e5ef992f589b6d5d28922822928e"
-        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained("shenzhi-wang/Llama3.1-8B-Chinese-Chat")
+        model = AutoModelForCausalLM.from_pretrained("shenzhi-wang/Llama3.1-8B-Chinese-Chat")
     elif model_name == 'Qwen':
         tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
         model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
