@@ -325,13 +325,18 @@ def generate_subgraphs(question, graph,device):
 
 def extract_depKB(question, dep,tokenizer,model, device,model_name,top_n=20):
     print(f"{dep}科室检索知识中...")
-    base_path = '/root/LLM-medical-KG/data/department_KB_' + model_name
+    # base_path = '/root/LLM-medical-KG/data/department_KB_' + model_name
+    base_path = '/root/LLM-medical-KG/data/department_KB_sbert'
     dep_path = os.path.join(base_path, dep)
     index_file = os.path.join(dep_path, 'embeddings.index')
     mapping_file = os.path.join(dep_path, 'mapping.json')
     
     with open(mapping_file, 'r', encoding='utf-8') as f:
         mapping = json.load(f)
+        
+    #这里使用sbert来匹配KB中的知识
+    tokenizer = AutoTokenizer.from_pretrained("uer/sbert-base-chinese-nli")
+    model = AutoModel.from_pretrained("uer/sbert-base-chinese-nli").to(device)
     
     question_embedding = get_sentence_embeddings_batch([question],tokenizer,model, device)
 
@@ -342,3 +347,26 @@ def extract_depKB(question, dep,tokenizer,model, device,model_name,top_n=20):
     for string in top_n_strings:
         print(string)
     return top_n_strings
+
+def check_bert_score(data_file_path):
+
+    with open(data_file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    tot, pre, rec, f1, preo, reco, f1o = [0] * 7
+
+    for d in data:
+        tot += d['+/-']
+        pre += d['bert_scores']['precision']
+        rec += d['bert_scores']['recall']
+        f1 += d['bert_scores']['f1']
+        preo += d['ori_bert_scores']['precision']
+        reco += d['ori_bert_scores']['recall']
+        f1o += d['ori_bert_scores']['f1']
+
+    n = len(data)
+    tot, pre, rec, f1, preo, reco, f1o = [x / n for x in [tot, pre, rec, f1, preo, reco, f1o]]
+
+    print(f"Total: {tot:.4f}")
+    print(f"BERT Scores - Precision: {pre:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
+    print(f"Original BERT Scores - Precision: {preo:.4f}, Recall: {reco:.4f}, F1: {f1o:.4f}")

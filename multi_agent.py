@@ -1,12 +1,3 @@
-'''
-Author: mksyk cuirj04@gmail.com
-Date: 2024-09-14 09:42:48
-LastEditors: mksyk cuirj04@gmail.com
-LastEditTime: 2024-09-24 07:01:33
-FilePath: /LLM-medical-KG/multi_agent.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
-
 from cmner import *
 from py2neo import Graph
 import time
@@ -44,7 +35,29 @@ def load_model_and_tokenizer(model_name,device):
         model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat", trust_remote_code=True)
         model.generation_config = GenerationConfig.from_pretrained("deepseek-ai/DeepSeek-V2-Lite-Chat")
         model.generation_config.pad_token_id = model.generation_config.eos_token_id
+    elif model_name == 'glm':
+        tokenizer = AutoTokenizer.from_pretrained("THUDM/glm-4-9b-chat", trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            "THUDM/glm-4-9b-chat",
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+            trust_remote_code=True
+        ).to(device).eval()
+    elif model_name == 'baichuan':
+        tokenizer = AutoTokenizer.from_pretrained("baichuan-inc/Baichuan2-13B-Chat",
+            use_fast=False,
+            trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained("baichuan-inc/Baichuan2-13B-Chat",
+            torch_dtype=torch.float16,
+            trust_remote_code=True)
+        model.generation_config = GenerationConfig.from_pretrained("baichuan-inc/Baichuan2-13B-Chat")
+    elif model_name == 'huatuo':
+        model = AutoModelForCausalLM.from_pretrained("FreedomIntelligence/HuatuoGPT2-7B", trust_remote_code=True)
 
+    elif model_name == 'baichuan':
+        model = AutoModelForCausalLM.from_pretrained("baichuan-inc/Baichuan-7B", trust_remote_code=True)
+        
+        
     model.to(device)
     return model, tokenizer
 

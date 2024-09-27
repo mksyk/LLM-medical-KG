@@ -3,3 +3,6 @@ data/
 test_outputs.md
 retry.py
 results/
+logs/
+dep_model/
+__pycache__/
