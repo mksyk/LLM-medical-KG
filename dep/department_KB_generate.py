@@ -71,7 +71,7 @@ def process_department_embeddings(model_name, graph, tokenizer, model, device):
         end_time = time.time()
         timeRecord(start_time, end_time)
 
-# 示例调用
+
 if __name__ == "__main__":
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     

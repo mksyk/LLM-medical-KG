@@ -6,8 +6,8 @@ import torch.optim as optim
 from datasets import Dataset
 import json
 import os
-from cre_query_dep import extract_and_save_data
-from get_departments import get_dep
+from dep.cre_query_dep import extract_and_save_data
+from dep.get_departments import get_dep
 
 departments,_ = get_dep()
 
@@ -126,10 +126,10 @@ def train_model(dataset, model_name="uer/sbert-base-chinese-nli", output_dir="de
                 val_outputs = classifier(val_embeddings)
                 val_loss = F.cross_entropy(val_outputs, val_labels)
                 total_val_loss += val_loss.item()
-
+                torch.set_printoptions(sci_mode=False, precision=2)
                 # 计算概率分布
                 probabilities = F.softmax(val_outputs, dim=1)
-                print(f"Probabilities:\n{probabilities}")
+                print(f"Probabilities:\n{probabilities*100}")
 
                 # 计算验证集准确率
                 _, predicted = torch.max(val_outputs, 1)
@@ -149,16 +149,17 @@ def train_model(dataset, model_name="uer/sbert-base-chinese-nli", output_dir="de
     torch.save(classifier.state_dict(), model_save_path)
     print(f"MLP Classifier model saved to {model_save_path}")
 
-# 文件路径
-input_file = "data/CMtMedQA_mapped.json"
-output_file = "data/query_dep.json"
+if __name__ == '__main__':
+    # 文件路径
+    input_file = "data/CMtMedQA_mapped.json"
+    output_file = "data/query_dep.json"
 
-# 如果尚未处理数据，则提取数据
-if not os.path.exists(output_file):
-    extract_and_save_data(input_file, output_file)
+    # 如果尚未处理数据，则提取数据
+    if not os.path.exists(output_file):
+        extract_and_save_data(input_file, output_file)
 
-# 加载并处理数据
-dataset = load_and_process_data(output_file)
+    # 加载并处理数据
+    dataset = load_and_process_data(output_file)
 
-# 模型训练，指定设备为 'cpu' 或 'cuda' 
-train_model(dataset, model_name='uer/sbert-base-chinese-nli', device="cuda" if torch.cuda.is_available() else "cpu")
+    # 模型训练，指定设备为 'cpu' 或 'cuda' 
+    train_model(dataset, model_name='uer/sbert-base-chinese-nli', device="cuda" if torch.cuda.is_available() else "cpu")

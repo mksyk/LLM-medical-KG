@@ -2,7 +2,7 @@
 
 
 import json
-from get_departments import get_dep
+from dep.get_departments import get_dep
 
 
 def extract_and_save_data(input_file, output_file):

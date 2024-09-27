@@ -5,13 +5,13 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 from datetime import datetime
 import os
+from dep.get_departments import get_dep
 
 # 定义一些文件和路径
 file_name = "test_outputs.md"
 profile = "bolt://neo4j:Crj123456@localhost:7687"
 
-# 定义科室
-departments = ['内科', '外科', '五官科', '皮肤性病科', '儿科', '妇产科', '肿瘤科', '传染科', '中医科', '急诊科', '精神科', '营养科', '心理科', '男科', '其他科室']
+departments,_ = get_dep()
 
 # 检查 results 文件夹是否存在
 if not os.path.exists("results"):
