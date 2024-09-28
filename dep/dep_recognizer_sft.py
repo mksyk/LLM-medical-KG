@@ -145,7 +145,7 @@ def train_model(dataset, model_name="uer/sbert-base-chinese-nli", output_dir="de
     # 保存模型
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    model_save_path = os.path.join(output_dir, "mlp_classifier.pth")
+    model_save_path = os.path.join(output_dir, "dep_classifier.pth")
     torch.save(classifier.state_dict(), model_save_path)
     print(f"MLP Classifier model saved to {model_save_path}")
 

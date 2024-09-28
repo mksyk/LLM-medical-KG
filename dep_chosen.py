@@ -3,6 +3,7 @@ from transformers import AutoTokenizer, AutoModel
 import torch.nn.functional as F
 from dep.get_departments import get_dep
 from dep.dep_recognizer_sft import MLPClassifier
+import json
 
 departments,_ = get_dep()
 
@@ -43,15 +44,38 @@ def predict_department(query, tokenizer, transformer_model, classifier, device):
         logits = classifier(embeddings)
         probabilities = F.softmax(logits, dim=1)  # 转化为概率分布
 
-    # 获取预测的类别和对应的概率
-    predicted_label_idx = torch.argmax(probabilities, dim=1).item()
-    predicted_label = departments[predicted_label_idx]
-    predicted_probability = probabilities[0, predicted_label_idx].item()
+    # 获取整个概率分布并排序，取前3个最高的类别
+    top_k = 3
+    top_probs, top_indices = torch.topk(probabilities, top_k, dim=1)
 
-    return predicted_label, predicted_probability
+    # 构建返回结果
+    top_labels = [departments[idx] for idx in top_indices[0].cpu().numpy()]
+    top_probabilities = top_probs[0].cpu().numpy()
 
-# 进行推断
-query = "我有头痛，伴随着恶心想吐，请问该去哪个科室？"
-predicted_label, predicted_probability = predict_department(query, tokenizer, transformer_model, classifier, device)
+    result = {
+        top_labels[i]: top_probabilities[i] * 100 for i in range(top_k)
+    }
 
-print(f"预测的科室是: {predicted_label}, 概率: {predicted_probability:.4f}")
+    return result
+
+# 测试修改后的函数
+data_file_path = 'data/huatuo_6000.json'
+with open(data_file_path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+cnt = 0
+for d in data:
+    cnt+=1
+    query = d['instruct']
+    result = predict_department(query, tokenizer, transformer_model, classifier, device)
+    
+    output = {
+        'query': query,
+        'top_predictions': result
+    }
+    
+    output_file_path = 'test_dep_cls.json'
+    with open(output_file_path, "a", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=4)
+    
+    print(f"{cnt}: {result}")

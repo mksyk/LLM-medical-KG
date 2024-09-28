@@ -43,4 +43,7 @@ file_path = 'data/CMtMedQA_mapped.json'
 
 # 统计 cate1 和 cate2 的内容及其出现的次数
 count_categories(file_path)
+
+
+
 pass

@@ -19,7 +19,7 @@ def extract_and_save_data(input_file, output_file):
             for history_item in entry["history"]:
                 query = history_item[0]  # 获取每个 history 列表中的第一个字符串
                 label1 = entry["cate1"]
-                label1 = label1 if label1 in departments else "其他科室"
+                label1 = label1 if label1 in departments else "nan"
                 
                 extracted_data = {
                     "query": query,  # 当前的 query
@@ -30,7 +30,7 @@ def extract_and_save_data(input_file, output_file):
             # 如果没有 history，使用 instruction 生成一条数据
             query = entry["instruction"]
             label1 = entry["cate1"]
-            label1 = label1 if label1 in departments else "其他科室"
+            label1 = label1 if label1 in departments else "nan"
             
             extracted_data = {
                 "query": query,  # 使用 instruction 作为 query
