@@ -6,3 +6,5 @@ results/
 logs/
 dep_model/
 __pycache__/
+data_made.py
+datasets/

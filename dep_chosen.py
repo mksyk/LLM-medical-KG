@@ -31,24 +31,18 @@ classifier.eval()
 transformer_model.eval()
 
 def predict_department(query, tokenizer, transformer_model, classifier, device):
-    # 对输入的query进行tokenizer编码
     inputs = tokenizer(query, padding='max_length', truncation=True, max_length=512, return_tensors="pt")
     inputs = {key: val.to(device) for key, val in inputs.items()}
 
-    # 生成文本嵌入
     with torch.no_grad():
-        embeddings = transformer_model(**inputs).last_hidden_state[:, 0, :]  # 使用 [CLS] token 的嵌入
-
-    # 通过分类器得到类别概率分布
+        embeddings = transformer_model(**inputs).last_hidden_state[:, 0, :]  
     with torch.no_grad():
         logits = classifier(embeddings)
-        probabilities = F.softmax(logits, dim=1)  # 转化为概率分布
+        probabilities = F.softmax(logits, dim=1)  
 
-    # 获取整个概率分布并排序，取前3个最高的类别
     top_k = 3
     top_probs, top_indices = torch.topk(probabilities, top_k, dim=1)
 
-    # 构建返回结果
     top_labels = [departments[idx] for idx in top_indices[0].cpu().numpy()]
     top_probabilities = top_probs[0].cpu().numpy()
 
@@ -63,9 +57,7 @@ data_file_path = 'data/huatuo_6000.json'
 with open(data_file_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-cnt = 0
 for d in data:
-    cnt+=1
     query = d['instruct']
     result = predict_department(query, tokenizer, transformer_model, classifier, device)
     
@@ -77,5 +69,3 @@ for d in data:
     output_file_path = 'test_dep_cls.json'
     with open(output_file_path, "a", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=4)
-    
-    print(f"{cnt}: {result}")

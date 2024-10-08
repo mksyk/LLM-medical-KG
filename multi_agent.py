@@ -52,27 +52,44 @@ def load_model_and_tokenizer(model_name,device):
             trust_remote_code=True)
         model.generation_config = GenerationConfig.from_pretrained("baichuan-inc/Baichuan2-13B-Chat")
     elif model_name == 'huatuo':
+        tokenizer = AutoTokenizer.from_pretrained("FreedomIntelligence/HuatuoGPT2-7B", trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained("FreedomIntelligence/HuatuoGPT2-7B", trust_remote_code=True)
 
     elif model_name == 'baichuan':
+        tokenizer = AutoTokenizer.from_pretrained("baichuan-inc/Baichuan-7B", trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained("baichuan-inc/Baichuan-7B", trust_remote_code=True)
+
+    elif model_name == 'Qwen2':
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
+        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-7B-Instruct")
         
         
     model.to(device)
     return model, tokenizer
 
+
+def get_original_model_output(query, model,tokenizer, device):
+    print('Getting original model output...')
+    inputs = tokenizer(query, return_tensors="pt").to(device)
+    outputs = model.generate(**inputs, max_new_tokens=1024)
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(query):].strip()
+    return response
+
+
 class MedicalAgent:
-    def __init__(self, department_name, model,model_name, tokenizer, device):
+    def __init__(self, department_name, model, tokenizer, device):
         self.department_name = department_name
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-        self.model_name = model_name
+
     def generate_response(self, query):
         # 使用 extract_depKB 函数获取与 query 匹配的科室知识
-        top_n_strings = extract_depKB(query, self.department_name, self.tokenizer, self.model, self.device, self.model_name, top_n=10)
+        top_n_strings = extract_depKB(query, self.department_name, self.tokenizer, self.model, self.device, top_n=10)
+
         # 将知识库的字符串列表拼接成一段提示
         kb_prompt = "\n".join([f"{i+1}. {s}" for i, s in enumerate(top_n_strings)])
+
         # 构造包含科室知识和患者信息的 prompt
         prompt = f"你是一名经验丰富的{self.department_name}专家，请根据以下患者信息提供专业意见：\n患者信息：{query}\n与该问题相关的知识：\n{kb_prompt}\n你的发言："
         print(f"{self.department_name}发言中...")
@@ -87,29 +104,62 @@ class MedicalAgent:
 
         return response
 
+
 class LeaderAgent:
-    def __init__(self, model, tokenizer, agents, graph, device):
-        self.model = model  
+    def __init__(self, model, tokenizer, graph, device="cuda" if torch.cuda.is_available() else "cpu"):
+        self.model = model
         self.tokenizer = tokenizer
-        self.agents = agents  
-        self.graph = graph 
+        self.graph = graph
         self.device = device
+
+        # 科室预测模型配置
+        model_name = "/root/.cache/huggingface/hub/models--uer--sbert-base-chinese-nli/snapshots/2081897a182fdc33ea6e840f0eb38959b63ec0d3"  # 训练时使用的模型名称
+        self.dep_tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.dep_transformer_model = AutoModel.from_pretrained(model_name).to(device)
+
+        input_dim = 768  # 对应 SBERT/BERT 输出维度
+        hidden_dim = 512  # 隐藏层维度
+        self.departments, _ = get_dep()  # 获取科室列表
+        output_dim = len(self.departments)
+
+        # 初始化分类器模型
+        self.dep_classifier = MLPClassifier(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim).to(device)
+        self.dep_classifier.load_state_dict(torch.load("dep_model/dep_classifier.pth"))
+        self.dep_classifier.eval()
+        self.dep_transformer_model.eval()
 
     def consult(self, query):
         save_to_md(file_name, '\nquery:\n' + query + '\n')
-        relevant_agents = self.decide_agents_via_leader(query)
-        knowledge_subgraphs = generate_subgraphs(query, self.graph, self.device)
-        responses = self.collect_responses(relevant_agents, query)
-        combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
-        final_response = self.summarize_with_leader_agent(combined_responses)
-        return final_response
 
-    def decide_agents_via_leader(self, query):
-        extracted_departments = departments  # 暂时不要科室选择过程
-        save_to_md(file_name, f"\n------departments------\n" + ','.join(extracted_departments) + "\n-----------------------\n")
-        return [agent for agent in self.agents.values() if agent.department_name in extracted_departments]
+        # 1. 通过科室分类器决定需要的科室
+        relevant_departments = list(self.predict_departments(query).keys())
+        save_to_md(file_name, f"\n------departments------\n" + ','.join(relevant_departments) + "\n-----------------------\n")
+
+        # 2. 动态初始化对应的 MedicalAgent
+        relevant_agents = self.initialize_medical_agents(relevant_departments)
+
+        # 3. 收集 MedicalAgent 的响应
+        responses = self.collect_responses(relevant_agents, query)
+
+        # 4. 整合响应和知识
+        knowledge_subgraphs = generate_subgraphs(query, self.graph, self.device)
+        combined_responses = self.combine_responses_with_knowledge(responses, knowledge_subgraphs)
+
+        # 5. 生成最终的诊断总结
+        final_response = self.summarize_with_leader_agent(combined_responses)
+        ori_model_output = get_original_model_output(query,self.model,self.tokenizer,self.device)
+        return final_response,ori_model_output
+
+    def predict_departments(self, query):
+        # 使用科室分类器预测相关的科室
+        return predict_department(query, self.dep_classifier, self.dep_tokenizer, self.dep_transformer_model, self.departments, self.device)
+
+    def initialize_medical_agents(self, relevant_departments):
+        # 动态初始化每个相关科室的 MedicalAgent
+        return [MedicalAgent(dep, self.model, self.tokenizer, self.device) for dep in relevant_departments]
 
     def collect_responses(self, agents, query):
+        # 收集每个 MedicalAgent 的响应
         responses = {}
         for agent in agents:
             response = agent.generate_response(query)
@@ -130,26 +180,24 @@ class LeaderAgent:
         final_response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
         return final_response
 
-# 封装整个咨询流程的主函数
-def run_medical_consultation(query, model_name='deepseek',device = "cuda" if torch.cuda.is_available() else "cpu"):
+
+# 主流程函数
+def run_medical_consultation(query, model_name='deepseek', device="cuda" if torch.cuda.is_available() else "cpu"):
     # 1. 连接知识图谱
     graph = connect_to_graph()
     
     # 2. 加载模型和 tokenizer
-    model, tokenizer = load_model_and_tokenizer(model_name,device)
+    model, tokenizer = load_model_and_tokenizer(model_name, device)
 
-    # 3. 初始化科室智能体
-    agents = {dep: MedicalAgent(dep, model,model_name, tokenizer, device) for dep in departments}
+    # 3. 初始化 LeaderAgent
+    leader_agent = LeaderAgent(model, tokenizer, graph, device)
 
-    # 4. 初始化 LeaderAgent
-    leader_agent = LeaderAgent(model, tokenizer, agents, graph, device)
-
-    # 5. 执行咨询流程
+    # 4. 执行咨询流程
     start_time = time.time()
-    final_answer = leader_agent.consult(query)
+    final_answer,ori_model_output = leader_agent.consult(query)
     print(f"最终问诊结果: {final_answer}")
     save_to_md(file_name, f"\n---------------\n最终问诊结果:\n {final_answer}")
     end_time = time.time()
     timeRecord(start_time, end_time)
 
-    return final_answer
+    return final_answer,ori_model_output

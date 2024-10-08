@@ -3,20 +3,29 @@ from py2neo import Graph
 from transformers import AutoTokenizer, AutoModelForCausalLM,GenerationConfig
 import time
 import torch
+import sys
+import os
+
+# 将上一级目录添加到 sys.path
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(parent_dir)
+
 from cmner import *
 import json
 import faiss
-import os
 from multi_agent import load_model_and_tokenizer
+from get_departments import get_dep
 
 
 
-def process_department_embeddings(model_name, graph, tokenizer, model, device):
-    datapath = 'data/department_KB_' + model_name
+def process_department_embeddings(graph, tokenizer, model, device):
+    datapath = 'data/department_KB'
 
-    departments = ['内科', '外科', '五官科', '皮肤性病科', '儿科', '妇产科', '肿瘤科', '传染科', '中医科', '急诊科', '精神科', '营养科', '心理科', '男科', '其他科室']
-    departments_big = ['内科', '外科', '五官科', '皮肤性病科', '儿科', '妇产科', '肿瘤科', '中医科', '其他科室']
-    departments_small = ['传染科', '急诊科', '精神科', '营养科', '心理科', '男科']
+    departments,hop = get_dep()
+    departments_big = []
+    for i in range(len(departments)):
+        if hop[i] == 3:
+            departments_big.append(departments[i])
     
     for dep in departments:
         index_path = datapath + f"/{dep}/embeddings.index"
@@ -24,11 +33,6 @@ def process_department_embeddings(model_name, graph, tokenizer, model, device):
 
         # 检查文件是否存在
         if os.path.exists(index_path) and os.path.exists(map_path):
-            # print(f"{dep} already processed. Deleting existing files...")
-            # # 删除文件
-            # os.remove(index_path)
-            # os.remove(map_path)
-            # print(f"Deleted {index_path} and {map_path}.")
             print(f"{dep} already processed.continue...")
             continue
 
@@ -79,10 +83,6 @@ if __name__ == "__main__":
     #连接到neo4j，获得知识图谱graph
     profile = "bolt://neo4j:Crj123456@localhost:7687"
     graph = Graph(profile)
-    llms_name = [ 'glm']
-    
-    # 请确保 graph、tokenizer 和 model 已定义并初始化
-    for model_name in llms_name:
-        model,tokenizer = load_model_and_tokenizer(model_name,device)
-        model = model.to(device)
-        process_department_embeddings(model_name, graph, tokenizer, model, device)
+    tokenizer = AutoTokenizer.from_pretrained("uer/sbert-base-chinese-nli")
+    model = AutoModel.from_pretrained("uer/sbert-base-chinese-nli").to(device)
+    process_department_embeddings(graph, tokenizer, model, device)

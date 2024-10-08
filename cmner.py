@@ -8,7 +8,9 @@ import json
 import faiss
 import re
 import os
-
+from dep.get_departments import get_dep
+from dep.dep_recognizer_sft import MLPClassifier
+import torch.nn.functional as F
 
 
 class NER:
@@ -107,8 +109,9 @@ def extract_entities(question):
     """
     ner_model = NER('/root/.cache/huggingface/hub/models--lixin12345--chinese-medical-ner/snapshots/5765a4d70ecf76d279d9f98bf4cdf0c52d388c7c')
     entities = ner_model.ner(question)  # 调用extract_entities函数
-    entities = list(set([''.join(d.get('tokens', [])) for d in entities]))
-    
+    entities = list(set([''.join(d.get('tokens', [])) for d in entities])) 
+    entities = [entity for entity in entities if entity not in ['[SEP]', '[CLS]']]
+    print(f"entities:\n{entities}")
     return entities
 
 def get_entity_embeddings(entities, device):
@@ -288,6 +291,21 @@ def triple_to_text(subgraphs):
 
     return generated_texts
 
+def triple_to_text_simple(subgraphs):
+    """ 
+    将取得的子图三元组转化为文本
+    """
+    generated_texts = []
+
+    for key, triples in subgraphs.items():
+        for triple in triples:
+            source = triple['source_node']
+            relationship = triple['relationship']
+            target = triple['target_node']
+            generated_texts.append(f"{source} {relationship} {target}")
+    return generated_texts
+
+
 def pruning(subgraphs, question, device, top_n=None, similarity_threshold=None):
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
@@ -323,10 +341,10 @@ def generate_subgraphs(question, graph,device):
     return subgraphs
 
 
-def extract_depKB(question, dep,tokenizer,model, device,model_name,top_n=20):
+def extract_depKB(question, dep,tokenizer,model, device,top_n=20):
     print(f"{dep}科室检索知识中...")
     # base_path = '/root/LLM-medical-KG/data/department_KB_' + model_name
-    base_path = '/root/LLM-medical-KG/data/department_KB_sbert'
+    base_path = '/root/LLM-medical-KG/data/department_KB'
     dep_path = os.path.join(base_path, dep)
     index_file = os.path.join(dep_path, 'embeddings.index')
     mapping_file = os.path.join(dep_path, 'mapping.json')
@@ -335,8 +353,8 @@ def extract_depKB(question, dep,tokenizer,model, device,model_name,top_n=20):
         mapping = json.load(f)
         
     #这里使用sbert来匹配KB中的知识
-    tokenizer = AutoTokenizer.from_pretrained("uer/sbert-base-chinese-nli")
-    model = AutoModel.from_pretrained("uer/sbert-base-chinese-nli").to(device)
+    tokenizer = AutoTokenizer.from_pretrained("/root/.cache/huggingface/hub/models--uer--sbert-base-chinese-nli/snapshots/2081897a182fdc33ea6e840f0eb38959b63ec0d3")
+    model = AutoModel.from_pretrained("/root/.cache/huggingface/hub/models--uer--sbert-base-chinese-nli/snapshots/2081897a182fdc33ea6e840f0eb38959b63ec0d3").to(device)
     
     question_embedding = get_sentence_embeddings_batch([question],tokenizer,model, device)
 
@@ -348,14 +366,21 @@ def extract_depKB(question, dep,tokenizer,model, device,model_name,top_n=20):
         print(string)
     return top_n_strings
 
-def check_bert_score(data_file_path):
+def check_score(data_file_path):
 
     with open(data_file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    # 初始化BERT和其他指标的累加器
     tot, pre, rec, f1, preo, reco, f1o = [0] * 7
+    tot_bleu, bleu_sys, bleu_ori = [0] * 3
+    tot_rouge1, tot_rouge2, tot_rougel = [0] * 3
+    tot_ori_rouge1, tot_ori_rouge2, tot_ori_rougel = [0] * 3
+    tot_diff_rouge1, tot_diff_rouge2, tot_diff_rougel = [0] * 3
 
+    # 累加所有数据的分数
     for d in data:
+        # BERT分数
         tot += d['+/-']
         pre += d['bert_scores']['precision']
         rec += d['bert_scores']['recall']
@@ -364,9 +389,100 @@ def check_bert_score(data_file_path):
         reco += d['ori_bert_scores']['recall']
         f1o += d['ori_bert_scores']['f1']
 
+        # BLEU分数
+        tot_bleu += d['+/-_bleu']
+        bleu_sys += d['bleu_score']['system']
+        bleu_ori += d['bleu_score']['original']
+
+        # ROUGE分数
+        tot_rouge1 += d['rouge_scores']['rouge-1']['system']
+        tot_rouge2 += d['rouge_scores']['rouge-2']['system']
+        tot_rougel += d['rouge_scores']['rouge-l']['system']
+
+        tot_ori_rouge1 += d['rouge_scores']['rouge-1']['original']
+        tot_ori_rouge2 += d['rouge_scores']['rouge-2']['original']
+        tot_ori_rougel += d['rouge_scores']['rouge-l']['original']
+
+        tot_diff_rouge1 += d['rouge_scores']['rouge-1']['+/-']
+        tot_diff_rouge2 += d['rouge_scores']['rouge-2']['+/-']
+        tot_diff_rougel += d['rouge_scores']['rouge-l']['+/-']
+
+    # 计算平均分
     n = len(data)
     tot, pre, rec, f1, preo, reco, f1o = [x / n for x in [tot, pre, rec, f1, preo, reco, f1o]]
+    tot_bleu, bleu_sys, bleu_ori = [x / n for x in [tot_bleu, bleu_sys, bleu_ori]]
+    tot_rouge1, tot_rouge2, tot_rougel = [x / n for x in [tot_rouge1, tot_rouge2, tot_rougel]]
+    tot_ori_rouge1, tot_ori_rouge2, tot_ori_rougel = [x / n for x in [tot_ori_rouge1, tot_ori_rouge2, tot_ori_rougel]]
+    tot_diff_rouge1, tot_diff_rouge2, tot_diff_rougel = [x / n for x in [tot_diff_rouge1, tot_diff_rouge2, tot_diff_rougel]]
 
-    print(f"Total: {tot:.4f}")
+    # 打印结果
+    print(f"Total BERT F1 Difference: {tot:.4f}")
     print(f"BERT Scores - Precision: {pre:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
     print(f"Original BERT Scores - Precision: {preo:.4f}, Recall: {reco:.4f}, F1: {f1o:.4f}")
+    
+    print(f"Total BLEU Difference: {tot_bleu:.4f}")
+    print(f"BLEU Scores - System: {bleu_sys:.4f}, Original: {bleu_ori:.4f}")
+    
+    print(f"ROUGE-1 - System: {tot_rouge1:.4f}, Original: {tot_ori_rouge1:.4f}, Difference: {tot_diff_rouge1:.4f}")
+    print(f"ROUGE-2 - System: {tot_rouge2:.4f}, Original: {tot_ori_rouge2:.4f}, Difference: {tot_diff_rouge2:.4f}")
+    print(f"ROUGE-L - System: {tot_rougel:.4f}, Original: {tot_ori_rougel:.4f}, Difference: {tot_diff_rougel:.4f}")
+
+    # 返回结果字典
+    result = {
+        'tot_bert_f1_diff': tot,
+        'precision_bert': pre,
+        'recall_bert': rec,
+        'f1_bert': f1,
+        'precision_ori_bert': preo,
+        'recall_ori_bert': reco,
+        'f1_ori_bert': f1o,
+        'tot_bleu_diff': tot_bleu,
+        'bleu_system': bleu_sys,
+        'bleu_original': bleu_ori,
+        'rouge-1': {
+            'system': tot_rouge1,
+            'original': tot_ori_rouge1,
+            'diff': tot_diff_rouge1
+        },
+        'rouge-2': {
+            'system': tot_rouge2,
+            'original': tot_ori_rouge2,
+            'diff': tot_diff_rouge2
+        },
+        'rouge-l': {
+            'system': tot_rougel,
+            'original': tot_ori_rougel,
+            'diff': tot_diff_rougel
+        }
+    }
+
+    return result
+
+
+def predict_department(query, classifier, tokenizer, transformer_model, departments, device):
+    print('departments...')
+    # 对输入的 query 进行编码
+    inputs = tokenizer(query, padding='max_length', truncation=True, max_length=512, return_tensors="pt")
+    inputs = {key: val.to(device) for key, val in inputs.items()}
+
+    # 生成文本嵌入
+    with torch.no_grad():
+        embeddings = transformer_model(**inputs).last_hidden_state[:, 0, :]  # 使用 [CLS] token 的嵌入
+
+    # 通过分类器得到类别概率分布
+    with torch.no_grad():
+        logits = classifier(embeddings)
+        probabilities = F.softmax(logits, dim=1)  # 转化为概率分布
+
+    # 获取概率最高的三个类别
+    top_k = 3
+    top_probs, top_indices = torch.topk(probabilities, top_k, dim=1)
+
+    # 获取对应的类别和概率
+    top_labels = [departments[idx] for idx in top_indices[0].cpu().numpy()]
+    top_probabilities = top_probs[0].cpu().numpy()
+
+    # 返回预测的科室名称
+    result = {top_labels[i]: top_probabilities[i] * 100 for i in range(top_k)}
+    print("chosed.")
+    return result
