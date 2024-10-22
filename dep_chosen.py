@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from dep.get_departments import get_dep
 from dep.dep_recognizer_sft import MLPClassifier
 import json
+from cmner import predict_department
+import random
 
 departments,_ = get_dep()
 
@@ -30,42 +32,22 @@ classifier.load_state_dict(torch.load("dep_model/dep_classifier.pth"))
 classifier.eval()
 transformer_model.eval()
 
-def predict_department(query, tokenizer, transformer_model, classifier, device):
-    inputs = tokenizer(query, padding='max_length', truncation=True, max_length=512, return_tensors="pt")
-    inputs = {key: val.to(device) for key, val in inputs.items()}
+datasets_name = ['huatuo_26M','CMtMedQA','cMedQA-V2.0']
 
-    with torch.no_grad():
-        embeddings = transformer_model(**inputs).last_hidden_state[:, 0, :]  
-    with torch.no_grad():
-        logits = classifier(embeddings)
-        probabilities = F.softmax(logits, dim=1)  
-
-    top_k = 3
-    top_probs, top_indices = torch.topk(probabilities, top_k, dim=1)
-
-    top_labels = [departments[idx] for idx in top_indices[0].cpu().numpy()]
-    top_probabilities = top_probs[0].cpu().numpy()
-
-    result = {
-        top_labels[i]: top_probabilities[i] * 100 for i in range(top_k)
-    }
-
-    return result
-
+for dataset in datasets_name:
 # 测试修改后的函数
-data_file_path = 'data/huatuo_6000.json'
-with open(data_file_path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-for d in data:
-    query = d['instruct']
-    result = predict_department(query, tokenizer, transformer_model, classifier, device)
-    
-    output = {
-        'query': query,
-        'top_predictions': result
-    }
-    
-    output_file_path = 'test_dep_cls.json'
-    with open(output_file_path, "a", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=4)
+    data_file_path = f"datasets/{dataset}.json"
+    with open(data_file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    random_entries = random.sample(data,100)
+    for d in data[:20]:
+        query = d['query']
+        result = predict_department(query,departments, device)
+        output = {
+            'query': query,
+            'top_predictions': result
+        }
+        
+        output_file_path = 'test_dep_cls.json'
+        with open(output_file_path, "a", encoding="utf-8") as f:
+            json.dump(output, f, ensure_ascii=False, indent=4)

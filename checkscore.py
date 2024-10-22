@@ -1,5 +1,5 @@
-from cmner import check_bert_score
+from cmner import check_score
 
-data_file_path = 'results/deepseek_20241008_022300.json'
-result = check_bert_score(data_file_path)
+data_file_path = 'results/deepseek_20241009_052824_huatuo_26M/outputs.json'
+result = check_score(data_file_path)
 pass

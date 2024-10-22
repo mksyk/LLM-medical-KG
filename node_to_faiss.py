@@ -1,43 +1,64 @@
-'''
-Author: mksyk cuirj04@gmail.com
-Date: 2024-09-11 07:52:53
-LastEditors: mksyk cuirj04@gmail.com
-LastEditTime: 2024-09-19 03:15:07
-FilePath: /LLM-medical-KG/node_to_faiss.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
 from py2neo import Graph
-from transformers import AutoTokenizer, AutoModelForMaskedLM
-import time
-import torch
-from cmner import *
 import json
 import faiss
+import torch
+import os
+from cmner import *
 
-#连接到neo4j，获得知识图谱graph
+# 连接到neo4j，获得知识图谱graph
 profile = "bolt://neo4j:Crj123456@localhost:7687"
 graph = Graph(profile)
 
-
-
 device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
-# query = "MATCH (n) RETURN n.name"
-# result = graph.run(query)
-# all_entities = [record['n.name'] for record in result]
-# dict_nodes = {i:all_entities[i] for i in range(len(all_entities))}
+# 查询所有Disease节点
+query = "MATCH (n:Disease) RETURN n"
+result = graph.run(query)
 
-# # 将元数据保存到JSON文件
-# with open("dict_nodes.json", "w", encoding="utf-8") as f:
-#     json.dump(dict_nodes, f,ensure_ascii=False)
+# 初始化字典，分别存储每个属性
+properties_dict = {
+    "name": {},
+    "desc": {},
+    "prevent": {},
+    "cure_way": {},
+    "cure_lasttime": {},
+    "cured_prob": {},
+    "cause": {},
+    "cure_department": {},
+    "easy_get": {}
+}
 
-# 从JSON文件加载元数据
-with open("data/dict_nodes.json", "r",encoding='utf-8') as f:
-    loaded_data = json.load(f)
-ids = list(map(int, loaded_data.keys()))
-node_names = list(loaded_data.values())
+# 遍历结果，将各属性分开保存
+for record in result:
+    node = record['n']
+    node_id = node.identity  # 获取节点ID
+
+    # 直接从Node对象访问属性
+    properties_dict["name"][node_id] = node.get('name', "")
+    properties_dict["desc"][node_id] = node.get('desc', "")
+    properties_dict["prevent"][node_id] = node.get('prevent', "")
+    properties_dict["cure_way"][node_id] = node.get('cure_way', "")
+    properties_dict["cure_lasttime"][node_id] = node.get('cure_lasttime', "")
+    properties_dict["cured_prob"][node_id] = node.get('cured_prob', "")
+    properties_dict["cause"][node_id] = node.get('cause', "")
+    properties_dict["cure_department"][node_id] = node.get('cure_department', "")
+    properties_dict["easy_get"][node_id] = node.get('easy_get', "")
+
+# 创建文件夹来保存属性的JSON文件
+output_dir = "data/properties"
+os.makedirs(output_dir, exist_ok=True)
+
+# 将每个属性的字典分别保存为单独的JSON文件
+for prop, data in properties_dict.items():
+    filename = os.path.join(output_dir, f"dict_node_{prop}.json")
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+# 获取节点名称用于embedding
+node_names = list(properties_dict["name"].values())
+
+# 获取节点的embedding
 all_embeddings = get_entity_embeddings(node_names, device)
-
 
 dimension = all_embeddings.shape[1]
 M = 16
@@ -47,12 +68,12 @@ ef_construction = 200
 index = faiss.IndexHNSWFlat(dimension, M)
 index.hnsw.ef_construction = ef_construction
 
-
 # 使用 IndexIDMap 来存储 ID
-index_with_ids = faiss.IndexIDMap(index)  # 包装 index 以便存储 ID
+index_with_ids = faiss.IndexIDMap(index)
 
 # 将 embeddings 和 ids 添加到索引中
-index_with_ids.add_with_ids(all_embeddings, ids)  # 将向量和对应的 ID 添加到索引中
+ids = list(map(int, properties_dict["name"].keys()))
+index_with_ids.add_with_ids(all_embeddings, ids)
 
 # 保存索引到文件
-faiss.write_index(index_with_ids, "data/node_embeddings.index")  # 保存索引文件
+faiss.write_index(index_with_ids, "data/node_disease_embeddings.index")

@@ -302,7 +302,7 @@ def triple_to_text_simple(subgraphs):
             source = triple['source_node']
             relationship = triple['relationship']
             target = triple['target_node']
-            generated_texts.append(f"{source} {relationship} {target}")
+            generated_texts.append(f"{source},{relationship},{target}")
     return generated_texts
 
 
@@ -310,7 +310,7 @@ def pruning(subgraphs, question, device, top_n=None, similarity_threshold=None):
     """
     剪枝：将三元组转化的文本的embedding与query的embedding进行相似度匹配，保留相似度高的内容。
     """
-    texts_from_subgraphs = triple_to_text(subgraphs)
+    texts_from_subgraphs = triple_to_text_simple(subgraphs)
     question_embedding = get_entity_embeddings([question], device)[0]
     texts_embeddings = get_entity_embeddings(texts_from_subgraphs,device)
     similarities = cosine_similarity([question_embedding], texts_embeddings)[0]
@@ -333,6 +333,8 @@ def pruning(subgraphs, question, device, top_n=None, similarity_threshold=None):
 
 def generate_subgraphs(question, graph,device):
     entities = extract_entities(question)
+    if not entities:
+        return []
     relative_nodenames = get_relative_nodenames(entities, device)
     subgraphs = extract_subgraph(relative_nodenames,graph)
     subgraphs = pruning(subgraphs, question, device, top_n =50)
@@ -344,7 +346,7 @@ def generate_subgraphs(question, graph,device):
 def extract_depKB(question, dep,tokenizer,model, device,top_n=20):
     print(f"{dep}科室检索知识中...")
     # base_path = '/root/LLM-medical-KG/data/department_KB_' + model_name
-    base_path = '/root/LLM-medical-KG/data/department_KB'
+    base_path = '/root/LLM-medical-KG/data/department_KB_simple'
     dep_path = os.path.join(base_path, dep)
     index_file = os.path.join(dep_path, 'embeddings.index')
     mapping_file = os.path.join(dep_path, 'mapping.json')
@@ -380,8 +382,8 @@ def check_score(data_file_path):
 
     # 累加所有数据的分数
     for d in data:
-        # BERT分数
-        tot += d['+/-']
+    # BERT分数
+        tot += d['+/-_bert_f1']
         pre += d['bert_scores']['precision']
         rec += d['bert_scores']['recall']
         f1 += d['bert_scores']['f1']
@@ -391,21 +393,21 @@ def check_score(data_file_path):
 
         # BLEU分数
         tot_bleu += d['+/-_bleu']
-        bleu_sys += d['bleu_score']['system']
-        bleu_ori += d['bleu_score']['original']
+        bleu_sys += d['bleu_sys']
+        bleu_ori += d['bleu_ori']
 
         # ROUGE分数
-        tot_rouge1 += d['rouge_scores']['rouge-1']['system']
-        tot_rouge2 += d['rouge_scores']['rouge-2']['system']
-        tot_rougel += d['rouge_scores']['rouge-l']['system']
+        tot_rouge1 += d['rouge_sys']['rouge1']
+        tot_rouge2 += d['rouge_sys']['rouge2']
+        tot_rougel += d['rouge_sys']['rougeL']
 
-        tot_ori_rouge1 += d['rouge_scores']['rouge-1']['original']
-        tot_ori_rouge2 += d['rouge_scores']['rouge-2']['original']
-        tot_ori_rougel += d['rouge_scores']['rouge-l']['original']
+        tot_ori_rouge1 += d['rouge_ori']['rouge1']
+        tot_ori_rouge2 += d['rouge_ori']['rouge2']
+        tot_ori_rougel += d['rouge_ori']['rougeL']
 
-        tot_diff_rouge1 += d['rouge_scores']['rouge-1']['+/-']
-        tot_diff_rouge2 += d['rouge_scores']['rouge-2']['+/-']
-        tot_diff_rougel += d['rouge_scores']['rouge-l']['+/-']
+        tot_diff_rouge1 += d['+/-_rouge1']
+        tot_diff_rouge2 += d['+/-_rouge2']
+        tot_diff_rougel += d['+/-_rougeL']
 
     # 计算平均分
     n = len(data)
@@ -459,8 +461,32 @@ def check_score(data_file_path):
     return result
 
 
-def predict_department(query, classifier, tokenizer, transformer_model, departments, device):
+def predict_department(query, departments, device, top_p=0.8):
+    """预测输入 query 所对应的相关科室，基于累积概率 top_p 筛选最少的科室。"""
+    # 模型配置
+    model_name = "uer/sbert-base-chinese-nli"  # 训练时使用的模型名称
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # 加载分词器和预训练的Transformer模型
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    transformer_model = AutoModel.from_pretrained(model_name).to(device)
+
+    input_dim = 768  # 对应 SBERT/BERT 输出维度
+    hidden_dim = 512  # 你定义的隐藏层维度
+    output_dim = len(departments)  # 输出类别数（即科室的数量）
+
+    # 初始化模型
+    classifier = MLPClassifier(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim).to(device)
+
+
+    # 加载保存的权重
+    classifier.load_state_dict(torch.load("dep_model/dep_classifier.pth"))
+
+    # 切换到评估模式
+    classifier.eval()
+    transformer_model.eval()
     print('departments...')
+    
     # 对输入的 query 进行编码
     inputs = tokenizer(query, padding='max_length', truncation=True, max_length=512, return_tensors="pt")
     inputs = {key: val.to(device) for key, val in inputs.items()}
@@ -474,15 +500,22 @@ def predict_department(query, classifier, tokenizer, transformer_model, departme
         logits = classifier(embeddings)
         probabilities = F.softmax(logits, dim=1)  # 转化为概率分布
 
-    # 获取概率最高的三个类别
-    top_k = 3
-    top_probs, top_indices = torch.topk(probabilities, top_k, dim=1)
+    # 对概率从高到低排序
+    sorted_probs, sorted_indices = torch.sort(probabilities, descending=True, dim=1)
 
-    # 获取对应的类别和概率
-    top_labels = [departments[idx] for idx in top_indices[0].cpu().numpy()]
-    top_probabilities = top_probs[0].cpu().numpy()
+    # 累积概率计算
+    cumulative_prob = 0.0
+    selected_labels = []
+    max_ag = 3
+    for i in range(sorted_probs.size(1)):  # 遍历排序后的概率
+        cumulative_prob += sorted_probs[0, i].item()
+        selected_labels.append((departments[sorted_indices[0, i].item()], sorted_probs[0, i].item() * 100))
+        if cumulative_prob >= top_p:
+            break
+        max_ag -= 1
+        if max_ag == 0:
+            break
 
-    # 返回预测的科室名称
-    result = {top_labels[i]: top_probabilities[i] * 100 for i in range(top_k)}
+    result = {label: prob for label, prob in selected_labels}
     print("chosed.")
     return result
