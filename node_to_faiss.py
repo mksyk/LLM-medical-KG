@@ -71,9 +71,11 @@ index.hnsw.ef_construction = ef_construction
 # 使用 IndexIDMap 来存储 ID
 index_with_ids = faiss.IndexIDMap(index)
 
+
+
 # 将 embeddings 和 ids 添加到索引中
 ids = list(map(int, properties_dict["name"].keys()))
 index_with_ids.add_with_ids(all_embeddings, ids)
-
+print("Index size:", index_with_ids.ntotal)
 # 保存索引到文件
 faiss.write_index(index_with_ids, "data/node_disease_embeddings.index")

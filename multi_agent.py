@@ -6,6 +6,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 from datetime import datetime
 import os
 from dep.get_departments import get_dep
+from fuzzywuzzy import fuzz
 
 # 定义一些文件和路径
 file_name = "test_outputs.md"
@@ -78,43 +79,42 @@ def get_original_model_output(query, model, tokenizer, device):
     outputs = model.generate(**inputs, max_new_tokens=1024, pad_token_id=tokenizer.eos_token_id)
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
     
-    save_to_md(file_name, f"\n-------原始模型输出--------\n{response}\n")
     
     return response
 
 
-class MedicalAgent:
-    def __init__(self, department_name, model, tokenizer, device):
-        self.department_name = department_name
-        self.model = model
-        self.tokenizer = tokenizer
-        self.device = device
+# class MedicalAgent:
+#     def __init__(self, department_name, model, tokenizer, device):
+#         self.department_name = department_name
+#         self.model = model
+#         self.tokenizer = tokenizer
+#         self.device = device
 
-    def generate_response(self, query):
-        """
-        MedicalAgent生成科室诊断结果，包含科室知识，并构建合理的prompt。
-        """
-        top_n_strings = extract_depKB(query, self.department_name, self.tokenizer, self.model, self.device, top_n=10)
-        kb_prompt = "\n".join([f"{i+1}. {s}" for i, s in enumerate(top_n_strings)])
+#     def generate_response(self, query):
+#         """
+#         MedicalAgent生成科室诊断结果，包含科室知识，并构建合理的prompt。
+#         """
+#         top_n_strings = extract_depKB(query, self.department_name, self.tokenizer, self.model, self.device, top_n=10)
+#         kb_prompt = "\n".join([f"{i+1}. {s}" for i, s in enumerate(top_n_strings)])
 
-        prompt = (
-            f"你是一名在{self.department_name}领域有多年经验的资深专家，精通处理复杂病例。"
-            f"现在有一位患者向你咨询，以下是他的病情描述和相关的科室知识。知识的形式是三元组，实体-关系-实体（用逗号分隔）。如果你认为这些知识可以用于回答，你应该在回答中提到这些内容。"
-            f"请基于这些信息提供你的专业诊断建议，结合你的丰富经验，给出可能的病因、进一步的检查建议，"
-            f"以及你认为有必要时应采取的治疗方案。\n"
-            f"患者信息：{query}\n"
-            f"相关科室知识：\n{kb_prompt}\n"
-            f"请详细回答："
-        )
+#         prompt = (
+#             f"你是一名在{self.department_name}领域有多年经验的资深专家，精通处理复杂病例。"
+#             f"现在有一位患者向你咨询，以下是他的病情描述和相关的科室知识。知识的形式是三元组，实体-关系-实体（用逗号分隔）。如果你认为这些知识可以用于回答，你应该在回答中提到这些内容。"
+#             f"请基于这些信息提供你的专业诊断建议，结合你的丰富经验，给出可能的病因、进一步的检查建议，"
+#             f"以及你认为有必要时应采取的治疗方案。\n"
+#             f"患者信息：{query}\n"
+#             f"相关科室知识：\n{kb_prompt}\n"
+#             f"请详细回答："
+#         )
 
-        inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
-        output = self.model.generate(**inputs, max_new_tokens=500, pad_token_id=self.tokenizer.eos_token_id)
-        response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
+#         inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
+#         output = self.model.generate(**inputs, max_new_tokens=500, pad_token_id=self.tokenizer.eos_token_id)
+#         response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
 
-        # 保存科室专家的发言
-        # save_to_md(file_name, f"\n-------{self.department_name}专家发言--------\n{response}\n")
+#         # 保存科室专家的发言
+#         # save_to_md(file_name, f"\n-------{self.department_name}专家发言--------\n{response}\n")
 
-        return response
+#         return response
 
 
 class LeaderAgent:
@@ -129,63 +129,107 @@ class LeaderAgent:
 
     def consult(self, query):
         """
-        LeaderAgent负责组织整个会诊流程，整合科室专家诊断与知识图谱，并最终生成总结。
+        LeaderAgent负责组织整个流程，推测疾病名称，并最终生成增强输出。
         """
-        save_to_md(file_name, f"\nquery:\n{query}\n")
+        ori_model_output = get_original_model_output(query, self.model, self.tokenizer, self.device)
+        inferred_disease = self.infer_disease_from_query(query,self.model,self.tokenizer,self.device)
+        if inferred_disease:
+            aligned_disease = self.align_disease_with_knowledge_graph(inferred_disease)
+            disease_properties = get_node_properties_by_name(aligned_disease)  # 从JSON中加载疾病属性
+            disease_description = generate_node_description(disease_properties)  # 生成描述文本
 
-        dep_chosen_result = self.predict_departments(query)
-        save_to_md(file_name,f'\n\n------相关科室------\n{dep_chosen_result}\n')
-        relevant_departments = list(dep_chosen_result.keys())
-        save_to_md(file_name, f"\n------相关科室------\n{', '.join(relevant_departments)}\n-------------------\n")
+            final_response = self.generate_final_response_with_disease_info(query, disease_description)
+            return final_response, ori_model_output,True
+        else:
+            return ori_model_output,ori_model_output,False
 
-        relevant_agents = self.initialize_medical_agents(relevant_departments)
-        responses = self.collect_responses(relevant_agents, query)
+    # def predict_departments(self, query):
+    #     return predict_department(query,self.departments, self.device)
 
-        knowledge_subgraphs = generate_subgraphs(query, self.graph, self.device)
-        combined_responses = self.combine_responses_with_knowledge(responses)
+    # def initialize_medical_agents(self, relevant_departments):
+    #     return [MedicalAgent(dep, self.model, self.tokenizer, self.device) for dep in relevant_departments]
 
-        final_response = self.summarize_with_leader_agent(knowledge_subgraphs,combined_responses)
-        save_to_md(file_name, f"\n---------------\n最终问诊结果:\n{final_response}\n---------------\n")
 
-        ori_model_output = get_original_model_output(query,self.model, self.tokenizer, self.device)
-
-        return final_response, ori_model_output
-
-    def predict_departments(self, query):
-        return predict_department(query,self.departments, self.device)
-
-    def initialize_medical_agents(self, relevant_departments):
-        return [MedicalAgent(dep, self.model, self.tokenizer, self.device) for dep in relevant_departments]
-
-    def collect_responses(self, agents, query):
-        responses = {}
-        for agent in agents:
-            response = agent.generate_response(query)
-            responses[agent.department_name] = response
-        return responses
-
-    def combine_responses_with_knowledge(self, responses):
-        combined = ""
-        for department, response in responses.items():
-            combined += f"【{department}的建议】\n{response}\n"
-        return combined
-
-    def summarize_with_leader_agent(self,knowledge_subgraphs,combined_responses):
+    
+    
+    def infer_disease_from_query(self,query, model, tokenizer, device):
+        """
+        使用大模型推测可能的疾病名称，输出格式明确为：'疾病名称: xxx'
+        """
         prompt = (
-            f"你是这次会诊的主治医生，需要汇总科室专家的意见并做出最终诊断。"
-            f"以下是各科室专家的详细诊断建议。请你基于这些内容进行全面分析，"
-            f"结合每个专家的意见，给出综合诊断，并排除你认为不合理的部分。"
-            f"同时，建议进一步的检查、潜在的治疗方案，以及你认为需要重点关注的病情发展。"
-            f"请在总结时尽量全面、严谨，确保没有遗漏重要信息。\n"
-            f"这里是可能相关的知识内容：\n{knowledge_subgraphs}\n"
-            f"其他科室专家意见如下：\n{combined_responses}\n"
-            f"请你总结他们的发言，做出全面的诊断总结："
+            f"你是一名经验丰富的医生，请根据以下患者的症状描述推测可能的疾病。"
+            f"\n患者症状：{query}\n"
+            f"请直接输出疾病名称，格式为 '疾病名称:xxx',你的输出应该严格遵照此格式,举例:'疾病名称:胃溃疡',"
+            f"也就是你的输出内容必须要首先输出疾病名称四个字和英文冒号，之后跟上你判断的疾病名称.你的输出:"
         )
-        save_to_md(file_name,f"\n\n汇总prompt:\n{prompt}\n\n")
+
+        inputs = tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(device)
+        outputs = model.generate(**inputs, max_new_tokens=1024, pad_token_id=tokenizer.eos_token_id)
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
+        print(response)
+
+        # 解析疾病名称
+        inferred_disease = None
+        if "疾病名称:" in response:
+            inferred_disease = response.split("疾病名称:")[1].split()[0].strip()  # 提取疾病名称部分
+        return inferred_disease
+    
+    def align_disease_with_knowledge_graph(self, inferred_disease):
+        """
+        将推测的疾病名称与知识图谱中的疾病名称对齐
+        """
+        aligned_disease = get_relative_disease([inferred_disease],self.device)
+        print(aligned_disease)
+
+        return list(aligned_disease.values())[0][0]
+        
+
+    def generate_final_response_with_disease_info(self, query, disease_description):
+        """
+        生成包含疾病信息的增强输出
+        """
+        prompt = (
+            f"你是一名经验丰富的医疗专家，请根据以下患者信息提供专业意见,患者的症状描述如下：{query}\n"
+            f"根据推测的疾病及相关信息，请生成详细的诊断建议。\n"
+            f"疾病相关信息：\n{disease_description}\n"
+            f"需要注意,疾病相关信息只用于参考,可以总结在你的回答中,你的重点依然是解决患者的问题.你的回答应该条理清晰,不要单纯的分点罗列."
+            f"你的诊断建议是："
+        )
         inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
-        output = self.model.generate(**inputs, max_new_tokens=1024, pad_token_id=self.tokenizer.eos_token_id)
-        final_response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
+        outputs = self.model.generate(**inputs, max_new_tokens=1024, pad_token_id=self.tokenizer.eos_token_id)
+        final_response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
+
         return final_response
+    
+    # def collect_responses(self, agents, query):
+    #     responses = {}
+    #     for agent in agents:
+    #         response = agent.generate_response(query)
+    #         responses[agent.department_name] = response
+    #     return responses
+
+    # def combine_responses_with_knowledge(self, responses):
+    #     combined = ""
+    #     for department, response in responses.items():
+    #         combined += f"【{department}的建议】\n{response}\n"
+    #     return combined
+
+    # def summarize_with_leader_agent(self,knowledge_subgraphs,combined_responses):
+    #     prompt = (
+    #         f"你是这次会诊的主治医生，需要汇总科室专家的意见并做出最终诊断。"
+    #         f"以下是各科室专家的详细诊断建议。请你基于这些内容进行全面分析，"
+    #         f"结合每个专家的意见，给出综合诊断，并排除你认为不合理的部分。"
+    #         f"同时，建议进一步的检查、潜在的治疗方案，以及你认为需要重点关注的病情发展。"
+    #         f"请在总结时尽量全面、严谨，确保没有遗漏重要信息。\n"
+    #         f"这里是可能相关的知识内容：\n{knowledge_subgraphs}\n"
+    #         f"其他科室专家意见如下：\n{combined_responses}\n"
+    #         f"请你总结他们的发言，做出全面的诊断总结："
+    #     )
+    #     save_to_md(file_name,f"\n\n汇总prompt:\n{prompt}\n\n")
+    #     inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to(self.device)
+    #     output = self.model.generate(**inputs, max_new_tokens=1024, pad_token_id=self.tokenizer.eos_token_id)
+    #     final_response = self.tokenizer.decode(output[0], skip_special_tokens=True)[len(prompt):].strip()
+    #     return final_response
 
 # 主流程函数
 def run_medical_consultation(query,model,tokenizer, device="cuda" if torch.cuda.is_available() else "cpu"):
@@ -193,12 +237,10 @@ def run_medical_consultation(query,model,tokenizer, device="cuda" if torch.cuda.
     graph = connect_to_graph()
 
     leader_agent = LeaderAgent(model, tokenizer, graph, device)
-
     start_time = time.time()
-    final_answer,ori_model_output = leader_agent.consult(query)
+    final_answer,ori_model_output,rd = leader_agent.consult(query)
     print(f"最终问诊结果: {final_answer}")
-    save_to_md(file_name, f"\n---------------\n最终问诊结果:\n {final_answer}")
     end_time = time.time()
     timeRecord(start_time, end_time)
 
-    return final_answer,ori_model_output
+    return final_answer,ori_model_output,rd

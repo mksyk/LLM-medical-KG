@@ -83,6 +83,11 @@ def save_to_md(file_name, content):
 
     # print(f"Content successfully saved to {file_name}")
 
+def save_dict_with_spacing(data, file_path):
+    with open(file_path, 'a', encoding='utf-8') as file:
+        for key, value in data.items():
+            file.write(f"{key}: {value}\n\n")  # 每条数据后加一个空行
+
 def timeRecord(start_time, end_time):
     total_seconds = end_time - start_time
     hours, remainder = divmod(total_seconds, 3600)
@@ -194,6 +199,32 @@ def get_relative_nodenames(entities, device, k=2):
     relative_nodenames = {}
 
     with open("data/dict_nodes.json", "r", encoding='utf-8') as f:
+        id_to_name = json.load(f)
+
+    for i, idx_list in enumerate(indices):
+        print(f"Query: {entities[i]}")
+        relative_nodenames[entities[i]] = []
+        for j, idx in enumerate(idx_list):
+            nearest_name = id_to_name[str(idx)]  # 注意 id 是字符串类型
+            relative_nodenames[entities[i]].append(nearest_name)
+            print(f"Nearest Neighbor {j+1}: {nearest_name} (ID: {idx})")
+            print(f"Distance: {distances[i][j]}")
+        print()
+
+    return relative_nodenames
+
+
+def get_relative_disease(entities, device, k=1):
+    embeddings = get_entity_embeddings(entities, device)
+    print(embeddings.shape)  
+
+    index_with_ids = faiss.read_index('data/node_disease_embeddings.index')
+
+    distances, indices = index_with_ids.search(embeddings, k)
+
+    relative_nodenames = {}
+
+    with open("data/properties/dict_node_name.json", "r", encoding='utf-8') as f:
         id_to_name = json.load(f)
 
     for i, idx_list in enumerate(indices):
@@ -375,10 +406,6 @@ def check_score(data_file_path):
 
     # 初始化BERT和其他指标的累加器
     tot, pre, rec, f1, preo, reco, f1o = [0] * 7
-    tot_bleu, bleu_sys, bleu_ori = [0] * 3
-    tot_rouge1, tot_rouge2, tot_rougel = [0] * 3
-    tot_ori_rouge1, tot_ori_rouge2, tot_ori_rougel = [0] * 3
-    tot_diff_rouge1, tot_diff_rouge2, tot_diff_rougel = [0] * 3
 
     # 累加所有数据的分数
     for d in data:
@@ -391,44 +418,12 @@ def check_score(data_file_path):
         reco += d['ori_bert_scores']['recall']
         f1o += d['ori_bert_scores']['f1']
 
-        # BLEU分数
-        tot_bleu += d['+/-_bleu']
-        bleu_sys += d['bleu_sys']
-        bleu_ori += d['bleu_ori']
-
-        # ROUGE分数
-        tot_rouge1 += d['rouge_sys']['rouge1']
-        tot_rouge2 += d['rouge_sys']['rouge2']
-        tot_rougel += d['rouge_sys']['rougeL']
-
-        tot_ori_rouge1 += d['rouge_ori']['rouge1']
-        tot_ori_rouge2 += d['rouge_ori']['rouge2']
-        tot_ori_rougel += d['rouge_ori']['rougeL']
-
-        tot_diff_rouge1 += d['+/-_rouge1']
-        tot_diff_rouge2 += d['+/-_rouge2']
-        tot_diff_rougel += d['+/-_rougeL']
-
     # 计算平均分
     n = len(data)
     tot, pre, rec, f1, preo, reco, f1o = [x / n for x in [tot, pre, rec, f1, preo, reco, f1o]]
-    tot_bleu, bleu_sys, bleu_ori = [x / n for x in [tot_bleu, bleu_sys, bleu_ori]]
-    tot_rouge1, tot_rouge2, tot_rougel = [x / n for x in [tot_rouge1, tot_rouge2, tot_rougel]]
-    tot_ori_rouge1, tot_ori_rouge2, tot_ori_rougel = [x / n for x in [tot_ori_rouge1, tot_ori_rouge2, tot_ori_rougel]]
-    tot_diff_rouge1, tot_diff_rouge2, tot_diff_rougel = [x / n for x in [tot_diff_rouge1, tot_diff_rouge2, tot_diff_rougel]]
-
-    # 打印结果
     print(f"Total BERT F1 Difference: {tot:.4f}")
     print(f"BERT Scores - Precision: {pre:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
     print(f"Original BERT Scores - Precision: {preo:.4f}, Recall: {reco:.4f}, F1: {f1o:.4f}")
-    
-    print(f"Total BLEU Difference: {tot_bleu:.4f}")
-    print(f"BLEU Scores - System: {bleu_sys:.4f}, Original: {bleu_ori:.4f}")
-    
-    print(f"ROUGE-1 - System: {tot_rouge1:.4f}, Original: {tot_ori_rouge1:.4f}, Difference: {tot_diff_rouge1:.4f}")
-    print(f"ROUGE-2 - System: {tot_rouge2:.4f}, Original: {tot_ori_rouge2:.4f}, Difference: {tot_diff_rouge2:.4f}")
-    print(f"ROUGE-L - System: {tot_rougel:.4f}, Original: {tot_ori_rougel:.4f}, Difference: {tot_diff_rougel:.4f}")
-
     # 返回结果字典
     result = {
         'tot_bert_f1_diff': tot,
@@ -438,24 +433,6 @@ def check_score(data_file_path):
         'precision_ori_bert': preo,
         'recall_ori_bert': reco,
         'f1_ori_bert': f1o,
-        'tot_bleu_diff': tot_bleu,
-        'bleu_system': bleu_sys,
-        'bleu_original': bleu_ori,
-        'rouge-1': {
-            'system': tot_rouge1,
-            'original': tot_ori_rouge1,
-            'diff': tot_diff_rouge1
-        },
-        'rouge-2': {
-            'system': tot_rouge2,
-            'original': tot_ori_rouge2,
-            'diff': tot_diff_rouge2
-        },
-        'rouge-l': {
-            'system': tot_rougel,
-            'original': tot_ori_rougel,
-            'diff': tot_diff_rougel
-        }
     }
 
     return result
@@ -519,3 +496,98 @@ def predict_department(query, departments, device, top_p=0.8):
     result = {label: prob for label, prob in selected_labels}
     print("chosed.")
     return result
+
+
+def load_disease_info(directory="data/properties"):
+    """
+    从指定目录中加载疾病名称信息，返回一个疾病名称字典。
+    """
+    with open(f"{directory}/dict_node_name.json", 'r', encoding='utf-8') as f:
+        disease_names = json.load(f)  # 加载疾病名称
+    return disease_names
+
+def load_json_files(directory):
+    """
+    从指定目录加载所有 JSON 文件到字典中。
+    """
+    json_data = {}
+    for filename in os.listdir(directory):
+        if filename.endswith(".json"):
+            file_path = os.path.join(directory, filename)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                prop_name = filename.replace('dict_node_', '').replace('.json', '')
+                json_data[prop_name] = json.load(f)
+    return json_data
+
+def get_node_properties_by_name(node_name, directory="data/properties"):
+    """
+    根据节点名称从 JSON 文件中提取该节点的所有属性。
+    """
+    # 加载所有JSON文件
+    data = load_json_files(directory)
+    
+    # 查找节点名称对应的ID
+    node_id = None
+    for node_key, node_value in data['name'].items():
+        if node_value == node_name:
+            node_id = node_key
+            break
+    
+    if node_id is None:
+        return f"节点名称'{node_name}'不存在。"
+
+    # 提取该节点的所有属性
+    node_properties = {}
+    for prop_name, prop_data in data.items():
+        node_properties[prop_name] = prop_data.get(node_id, "")
+
+    return node_properties
+
+
+def generate_node_description(properties):
+    """
+    根据节点的属性生成描述文本。
+    """
+
+    description = []
+
+    # 添加疾病名称
+    if properties.get('name'):
+        description.append(f"疾病名称：{properties['name']}。")
+
+    # 添加描述
+    if properties.get('desc'):
+        description.append(f"疾病描述：{properties['desc']}")
+
+    # 添加预防信息
+    if properties.get('prevent'):
+        description.append(f"预防措施：{properties['prevent']}")
+
+    # 添加治疗方法
+    if properties.get('cure_way'):
+        cure_ways = "、".join(properties['cure_way']) if isinstance(properties['cure_way'], list) else properties['cure_way']
+        description.append(f"治疗方法：{cure_ways}")
+
+    # 添加治疗时长
+    if properties.get('cure_lasttime'):
+        description.append(f"治疗时长：{properties['cure_lasttime']}")
+
+    # 添加治愈概率
+    if properties.get('cured_prob'):
+        description.append(f"治愈概率：{properties['cured_prob']}")
+
+    # 添加发病原因
+    if properties.get('cause'):
+        description.append(f"发病原因：{properties['cause']}")
+
+    # 添加易患人群
+    if properties.get('easy_get'):
+        description.append(f"易患人群：{properties['easy_get']}")
+
+    # 添加就诊科室
+    if properties.get('cure_department'):
+        cure_departments = "、".join(properties['cure_department']) if isinstance(properties['cure_department'], list) else properties['cure_department']
+        description.append(f"推荐就诊科室：{cure_departments}")
+
+    # 将各段描述合并为最终文本
+    return "\n".join(description)
